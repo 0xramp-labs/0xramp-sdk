@@ -29,6 +29,51 @@ All notable changes to this project are documented here. Format based on
 - Example hosts: `examples/electron-host/`, `examples/react-native-host/`.
 - CI: strict typecheck, tests, audit, publish dry-run on Node 20/22.
 
+### Fixed
+
+- `@0xramp/sdk/session` subpath export: `src/session/index.ts` was missing,
+  so the documented subpath import failed at runtime (export map pointed at a
+  file `tsc` never emitted).
+- `requestId` is now single-use **forever**: a replayed `psp/zec-send-request`
+  after the first request completed was previously dispatched again (double
+  wallet-sign risk). In-flight replays were already rejected.
+- Electron example: `main.js` loaded the pane directly as the top-level
+  window, so `host.html` (the host bridge half) never ran. It now loads
+  `host.html?paneUrl=…` (via `pathToFileURL`, Windows-safe) and the origin
+  lock uses `will-frame-navigate` to cover iframe navigations too.
+- `ApiError` messages no longer contain the raw `sessionRef` (redacted, per
+  the logging contract).
+
+### Changed
+
+- `createSession` now refuses (fail closed) any `sessionUrl` returned by the
+  API outside the pane origin allowlist (derived from the configured API
+  origin) — defense in depth against a hijacked create response, and cover
+  for the iOS initial-load gap where `onShouldStartLoadWithRequest` is not
+  called.
+- The bridge binds only on the first accepted `psp/ready`; any other message
+  on an unbound bridge is rejected instead of binding (matches the documented
+  contract).
+- A missing `fetch` in the runtime now raises `ConfigError` at construction
+  instead of an opaque `TypeError`.
+- Status tickets held in memory are capped (most recent 16 sessions).
+- Release workflow gates the tag against `package.json` version and a dated
+  CHANGELOG entry; the CI publish dry-run mirrors `--access public`.
+- RN example actually calls `createSession` (with sandbox fallback), aligns
+  `originWhitelist` with the partner guide, and validates the session URL
+  before first load; partner guide documents the iOS initial-load gap.
+
+### Out of v0 (explicit descope)
+
+- Variant A stateless URL builder (plan §4.1 channel 2): deferred until the
+  partner landing route exists server-side (sibling ticket S1); hosts use the
+  server-issued `sessionUrl` only.
+- Canonical serialization helpers: deferred — v0 has no signed digests;
+  return-URL parsing ships instead.
+- Playwright e2e for `examples/electron-host` (plan §10.3): deferred to M3;
+  the example is runnable manually (`npm start`) and conformance is carried
+  by the vitest fixture-parity suite.
+
 ### Notes
 
 - v0 scope: session opener, bridge, status reader. No signer, no orchestrator,

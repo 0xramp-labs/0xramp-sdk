@@ -2,14 +2,17 @@
  * Minimal React Native host for the 0xramp SDK (PSP-v1).
  *
  * Demonstrates the full host integration:
- * - createSession → sessionUrl;
+ * - createSession → load the returned sessionUrl (sandbox pane fallback);
  * - WebView pane with navigation locked to 0xramp origins;
  * - a PaneTransport adapter over WebView postMessage;
  * - onZecSendRequest → your wallet core signs (stubbed here);
  * - advisory result handling + attribution.
  *
- * Default session URL points at the repo's sandbox pane served over the
- * metro dev server; pass a real sessionUrl from createSession for pilots.
+ * With EXPO_PUBLIC_PARTNER_ID set, "Start ramp" calls createSession and
+ * loads the returned URL (asserted against the origin allowlist first — on
+ * iOS the initial `source` load bypasses onShouldStartLoadWithRequest).
+ * Without it, the sandbox pane is used so the bridge flow is testable with
+ * zero 0xramp access.
  */
 import { useMemo, useRef, useState } from "react";
 import { SafeAreaView, StatusBar, Text, TouchableOpacity, View } from "react-native";
@@ -17,22 +20,30 @@ import { WebView, type WebViewMessageEvent, type WebViewNavigation } from "react
 
 import {
   ALLOWED_PANE_HOST_SUFFIXES,
+  assertAllowedPaneNavigation,
   attachPaneBridge,
   createRampClient,
   isAllowedPaneNavigation,
   type PaneBridge,
   type PaneTransport,
+  type RampClient,
 } from "@0xramp/sdk";
 
 const SANDBOX_PANE_URL = "http://localhost:8081/sandbox-pane.html"; // serve sandbox/ via any static server
-const REAL_PANE_URL = process.env.EXPO_PUBLIC_PANE_URL ?? SANDBOX_PANE_URL;
+const PARTNER_ID = process.env.EXPO_PUBLIC_PARTNER_ID ?? "";
 
 export default function App(): JSX.Element {
   const webRef = useRef<WebView>(null);
   const bridgeRef = useRef<PaneBridge | null>(null);
-  const listenerRef = useRef<(raw: unknown) => void>();
+  const listenerRef = useRef<((raw: unknown) => void) | undefined>(undefined);
   const [status, setStatus] = useState("idle");
   const [lastResult, setLastResult] = useState<string>("");
+  const [paneUrl, setPaneUrl] = useState<string>(SANDBOX_PANE_URL);
+
+  const ramp: RampClient | null = useMemo(
+    () => (PARTNER_ID === "" ? null : createRampClient({ environment: "production", partnerId: PARTNER_ID })),
+    [],
+  );
 
   const transport: PaneTransport = useMemo(
     () => ({
@@ -48,6 +59,30 @@ export default function App(): JSX.Element {
     }),
     [],
   );
+
+  const startSession = async () => {
+    if (ramp === null) {
+      setStatus("no EXPO_PUBLIC_PARTNER_ID — using the sandbox pane");
+      return;
+    }
+    try {
+      setStatus("creating session…");
+      const session = await ramp.createSession({
+        direction: "sell",
+        asset: "ZEC",
+        fiat: "BRL",
+        returnUrl: "zingo://ramp",
+      });
+      // iOS: the initial `source` load never reaches onShouldStartLoadWithRequest,
+      // so the session URL must be validated before it is handed to the WebView.
+      assertAllowedPaneNavigation(session.sessionUrl);
+      setPaneUrl(session.sessionUrl);
+      setStatus(`session created (${session.sessionRef.length}-char ref) — pane loading`);
+    } catch (error) {
+      setStatus(`createSession failed: ${error instanceof Error ? error.message : "unknown"} — sandbox fallback`);
+      setPaneUrl(SANDBOX_PANE_URL);
+    }
+  };
 
   const attach = () => {
     if (bridgeRef.current) return;
@@ -78,10 +113,12 @@ export default function App(): JSX.Element {
     listenerRef.current?.(event.nativeEvent.data);
   };
 
-  // Origin lock: only 0xramp origins (https) may load inside the pane.
+  // Origin lock: only 0xramp origins (https) — plus the dev sandbox pane — may load.
   const onShouldStartLoadWithRequest = (request: WebViewNavigation): boolean => {
-    const allowed = isAllowedPaneNavigation(request.url, ALLOWED_PANE_HOST_SUFFIXES);
-    if (!allowed && !request.url.startsWith(SANDBOX_PANE_URL)) {
+    const allowed =
+      isAllowedPaneNavigation(request.url, ALLOWED_PANE_HOST_SUFFIXES) ||
+      request.url.startsWith(SANDBOX_PANE_URL);
+    if (!allowed) {
       setStatus(`origin lock: blocked ${request.url.slice(0, 48)}…`);
       return false;
     }
@@ -92,10 +129,15 @@ export default function App(): JSX.Element {
     <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
       <StatusBar barStyle="dark-content" />
       <View style={{ flexDirection: "row", alignItems: "center", gap: 12, padding: 12 }}>
+        <TouchableOpacity onPress={startSession}>
+          <Text style={{ color: "#1d4ed8", fontWeight: "600" }}>Start ramp</Text>
+        </TouchableOpacity>
         <TouchableOpacity onPress={attach}>
           <Text style={{ color: "#1d4ed8", fontWeight: "600" }}>Attach bridge</Text>
         </TouchableOpacity>
-        <Text style={{ color: "#374151", fontSize: 12 }}>{status}</Text>
+        <Text style={{ color: "#374151", fontSize: 12, flexShrink: 1 }} numberOfLines={1}>
+          {status}
+        </Text>
         <Text style={{ color: "#6b7280", fontSize: 11, marginLeft: "auto" }}>
           Powered by 0xramp · P2P.me
         </Text>
@@ -107,10 +149,10 @@ export default function App(): JSX.Element {
       )}
       <WebView
         ref={webRef}
-        source={{ uri: REAL_PANE_URL }}
+        source={{ uri: paneUrl }}
         onMessage={onMessage}
         onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
-        originWhitelist={["https://*", "http://localhost:*"]}
+        originWhitelist={["https://0xramp.app", "https://*.0xramp.app", "http://localhost:*"]}
         javaScriptEnabled
         domStorageEnabled={false}
       />

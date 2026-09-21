@@ -17,8 +17,10 @@ PANE_URL="https://0xramp.app/partner/<partnerId>?sessionRef=…" npm start
 
 What it demonstrates:
 
-- hardened renderer (sandbox + context isolation, no Node in the pane);
-- origin lock in the main process (`will-navigate`, `setWindowOpenHandler`);
+- hardened renderer (sandbox + context isolation, no Node in the pane) — the
+  top-level window is `host.html`, which iframes the pane;
+- origin lock in the main process (`will-frame-navigate` covers the main
+  frame **and** subframes, `setWindowOpenHandler` blocks popups);
 - the host half of the bridge: validate → confirm → reply
   (`psp/zec-send-result` / `psp/zec-send-cancel`);
 - attribution "Powered by 0xramp · P2P.me".

@@ -19,8 +19,13 @@ npm install
 npm start
 ```
 
-For pilots, replace `EXPO_PUBLIC_PANE_URL` with a real partner session URL
-from `createSession` and implement the confirm/sign step against your wallet.
+Without configuration the pane loads the sandbox. Set `EXPO_PUBLIC_PARTNER_ID`
+in your environment (or `.env`) and press **Start ramp** to call
+`createSession` and load the returned session URL (validated against the
+origin allowlist first — on iOS the initial `source` load bypasses
+`onShouldStartLoadWithRequest`).
+
+For pilots, implement the confirm/sign step against your wallet.
 
 Known matrix gaps (RN WebView): passkeys and bank-app handoffs may require
 the external-browser fallback path — see `docs/partner-guide.md`

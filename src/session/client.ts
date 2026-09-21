@@ -11,7 +11,9 @@
  */
 import {
   ApiError,
+  ConfigError,
   NetworkUnavailableError,
+  OriginLockViolationError,
   PartnerQuotaExceededError,
   PspError,
   SchemaViolationError,
@@ -36,10 +38,38 @@ import {
   type PaneBridgeHandlers,
   type PaneTransport,
 } from "../bridge/bridge.js";
+import { isAllowedPaneNavigation } from "../bridge/origin.js";
 import { parseReturnUrl, type ParsedReturnUrl } from "./returnUrl.js";
 import { PARTNER_SESSIONS_PATH, resolveApiBaseUrl, type SdkEnvironment } from "./environments.js";
 export { parseReturnUrl };
 export type { ParsedReturnUrl };
+
+/** Cap on status tickets kept in memory (insertion-ordered eviction). */
+const MAX_TRACKED_SESSIONS = 16;
+
+/**
+ * Allowlist suffix for the pane origin, derived from the configured API
+ * origin: the hostname itself, minus one leading label when present (so an
+ * API on `api.<domain>` still accepts a pane on a sibling subdomain).
+ */
+function paneOriginSuffix(apiOrigin: string): string {
+  const host = new URL(apiOrigin).hostname.toLowerCase();
+  const labels = host.split(".");
+  return labels.length > 2 ? labels.slice(1).join(".") : host;
+}
+
+/**
+ * Redact the trailing sessionRef segment of a request path before it may
+ * end up inside an error message (the redaction contract never surfaces
+ * raw session refs, even to host code that logs errors).
+ */
+function redactedRequestPath(path: string): string {
+  const prefix = `${PARTNER_SESSIONS_PATH}/`;
+  if (path.startsWith(prefix)) {
+    return `${PARTNER_SESSIONS_PATH}/${redactSessionRef(path.slice(prefix.length))}`;
+  }
+  return path;
+}
 
 /** Supported pane locales for the hosted ramp experience. */
 export type RampLocale = "pt" | "en" | "es" | "hi" | "id";
@@ -137,7 +167,12 @@ export function createRampClient(config: RampClientConfig): RampClient {
     throw new PspError("ConfigError", "partnerId is malformed (expected 1–64 chars of [A-Za-z0-9_-])");
   }
   const { apiBaseUrl } = resolveApiBaseUrl(config.environment, config.apiBaseUrl);
-  const doFetch = config.fetch ?? globalThis.fetch.bind(globalThis);
+  const fetchImpl: typeof fetch | undefined =
+    config.fetch ?? (globalThis as { fetch?: typeof fetch }).fetch;
+  if (typeof fetchImpl !== "function") {
+    throw new ConfigError("fetch is not available in this runtime — provide one via config.fetch");
+  }
+  const doFetch = fetchImpl.bind(globalThis);
   const logger = config.logger;
   const sessions = new Map<string, StoredSession>();
   let lastCreatedSessionRef: string | undefined;
@@ -172,7 +207,7 @@ export function createRampClient(config: RampClientConfig): RampClient {
       throw new PartnerQuotaExceededError();
     }
     if (!response.ok) {
-      throw new ApiError(response.status, `hosted API returned ${response.status} for ${path}`);
+      throw new ApiError(response.status, `hosted API returned ${response.status} for ${redactedRequestPath(path)}`);
     }
     let body: unknown;
     try {
@@ -209,7 +244,16 @@ export function createRampClient(config: RampClientConfig): RampClient {
         { method: "POST", body: JSON.stringify(checked.value) },
         parseCreateSessionResponse,
       );
+      if (!isAllowedPaneNavigation(res.sessionUrl, [paneOriginSuffix(apiBaseUrl)])) {
+        throw new OriginLockViolationError(
+          "hosted API returned a sessionUrl outside the pane origin allowlist — refusing the session",
+        );
+      }
       sessions.set(res.sessionRef, { statusTicket: res.statusTicket });
+      if (sessions.size > MAX_TRACKED_SESSIONS) {
+        const oldest = sessions.keys().next().value;
+        if (oldest !== undefined) sessions.delete(oldest);
+      }
       lastCreatedSessionRef = res.sessionRef;
       logger?.info?.("partner session created", {
         sessionRef: redactSessionRef(res.sessionRef),
@@ -248,6 +292,11 @@ export function createRampClient(config: RampClientConfig): RampClient {
 
     attachPaneBridge(options: AttachPaneBridgeOptions): PaneBridge {
       const { transport, sessionRef = lastCreatedSessionRef, ...handlers } = options;
+      if (options.sessionRef === undefined && sessionRef !== undefined) {
+        logger?.debug?.("no sessionRef given — binding the bridge to the most recently created session", {
+          sessionRef: redactSessionRef(sessionRef),
+        });
+      }
       return attachPaneBridge({
         transport,
         handlers,

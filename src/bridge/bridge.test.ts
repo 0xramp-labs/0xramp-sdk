@@ -26,6 +26,11 @@ function makeTransport() {
   };
 }
 
+/** Flush all pending microtasks (promise chains) before the next macrotask. */
+function flushMicrotasks(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 const SESSION = "sessGOLDEN00000001";
 const REQ = "reqGOLDEN00000001";
 const TXID = "0".repeat(64);
@@ -142,6 +147,38 @@ describe("attachPaneBridge", () => {
     expect(onZecSendRequest).toHaveBeenCalledOnce();
     expect(bridge.getStats().dropped).toBe(1);
     expect(bridge.getStats().schemaViolations).toBe(1);
+  });
+
+  it("drops a replayed requestId even after the first request completed", async () => {
+    const t = makeTransport();
+    const onZecSendRequest = vi.fn(() => ({ txid: TXID }));
+    const bridge = attachPaneBridge({ transport: t.transport, handlers: { onZecSendRequest }, sessionRef: SESSION });
+    t.emit(sendRequestEnvelope());
+    await flushMicrotasks();
+    expect(t.sent).toHaveLength(1); // first reply sent
+    t.emit(sendRequestEnvelope());
+    await flushMicrotasks();
+    expect(onZecSendRequest).toHaveBeenCalledOnce();
+    expect(t.sent).toHaveLength(1); // no second reply
+    expect(bridge.getStats().dropped).toBe(1);
+    expect(bridge.getStats().schemaViolations).toBe(1);
+  });
+
+  it("refuses a non-ready message on an unbound bridge, then binds on psp/ready", async () => {
+    const t = makeTransport();
+    const onZecSendRequest = vi.fn(() => ({ txid: TXID }));
+    const onProtocolError = vi.fn();
+    attachPaneBridge({ transport: t.transport, handlers: { onZecSendRequest, onProtocolError } });
+    t.emit(sendRequestEnvelope());
+    await flushMicrotasks();
+    expect(onZecSendRequest).not.toHaveBeenCalled();
+    expect(t.sent).toHaveLength(0);
+    expect(onProtocolError.mock.calls[0]?.[0]?.code).toBe("SessionMismatch");
+    t.emit(readyEnvelope());
+    t.emit(sendRequestEnvelope());
+    await flushMicrotasks();
+    expect(onZecSendRequest).toHaveBeenCalledOnce();
+    expect(t.sent).toHaveLength(1);
   });
 
   it("refuses the session on unknown envelope version (detaches listeners)", () => {

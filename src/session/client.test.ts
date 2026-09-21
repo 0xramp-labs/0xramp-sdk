@@ -63,6 +63,40 @@ describe("createRampClient", () => {
     expect(body["asset"]).toBe("ZEC");
   });
 
+  it("refuses a sessionUrl outside the pane origin allowlist (fail closed)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(200, { ...SESSION_RESPONSE, sessionUrl: "https://evil.example/partner/zingo" }),
+    );
+    const client = createRampClient(makeConfig(fetchMock));
+    await expect(
+      client.createSession({ direction: "sell", asset: "ZEC", fiat: "BRL" }),
+    ).rejects.toMatchObject({ code: "OriginLockViolation" });
+  });
+
+  it("accepts a sessionUrl on a subdomain of the API origin", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        ...SESSION_RESPONSE,
+        sessionUrl: "https://partner.0xramp.app/partner/zingo?sessionRef=sessGOLDEN00000001",
+      }),
+    );
+    const client = createRampClient(makeConfig(fetchMock));
+    await expect(
+      client.createSession({ direction: "sell", asset: "ZEC", fiat: "BRL" }),
+    ).resolves.toMatchObject({ sessionRef: SESSION_RESPONSE.sessionRef });
+  });
+
+  it("redacts the sessionRef in ApiError messages for status calls", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, SESSION_RESPONSE));
+    const client = createRampClient(makeConfig(fetchMock));
+    await client.createSession({ direction: "sell", asset: "ZEC", fiat: "BRL" });
+    fetchMock.mockResolvedValue(jsonResponse(404, {}));
+    const err = await client.getStatus(SESSION_RESPONSE.sessionRef).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as { code?: string }).code).toBe("ApiError");
+    expect((err as Error).message).not.toContain(SESSION_RESPONSE.sessionRef);
+  });
+
   it("getStatus uses the stored ticket via PartnerTicket auth", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, SESSION_RESPONSE));
     const client = createRampClient(makeConfig(fetchMock));

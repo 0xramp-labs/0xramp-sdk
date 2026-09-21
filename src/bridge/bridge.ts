@@ -4,9 +4,11 @@
  * The pane drives; the host handles. Fail-closed posture:
  * - every envelope is schema-validated before handler dispatch;
  * - unknown envelope `v` → `UnsupportedProtocolVersion`, session refused (listeners detached);
+ * - the bridge binds on the first accepted `psp/ready` — any other message on an
+ *   unbound bridge fails closed;
  * - `sessionRef` mismatch → message dropped and counted, never dispatched;
  * - wrong-direction messages → schema violation, dropped;
- * - `requestId` is single-use; replays are dropped;
+ * - `requestId` is single-use forever; replays (in flight or after completion) are dropped;
  * - schema violations never crash the host — they surface via `onProtocolError`/logger.
  */
 import {
@@ -56,8 +58,8 @@ export interface PaneBridgeOptions {
   handlers: PaneBridgeHandlers;
   /**
    * Session this bridge is bound to. When omitted, the bridge binds to the
-   * sessionRef of the first accepted pane → host message and enforces the
-   * match strictly from then on.
+   * sessionRef of the first accepted `psp/ready` and enforces the match
+   * strictly from then on (other messages before binding fail closed).
    */
   sessionRef?: string;
   /** Logger hook; receives redacted identifiers only. */
@@ -123,6 +125,8 @@ export function attachPaneBridge(options: PaneBridgeOptions): PaneBridge {
   };
 
   const pendingReplies = new Set<string>();
+  /** Every requestId ever accepted — single-use forever, not just while in flight. */
+  const handledRequestIds = new Set<string>();
 
   function fail(error: PspError, raw: unknown): void {
     stats.dropped += 1;
@@ -134,8 +138,12 @@ export function attachPaneBridge(options: PaneBridgeOptions): PaneBridge {
   function sendHostToPane(type: "psp/zec-send-result", payload: { requestId: string; txid: string }): void;
   function sendHostToPane(type: "psp/zec-send-cancel", payload: { requestId: string; reason: string }): void;
   function sendHostToPane(type: string, payload: Record<string, string>): void {
+    if (closed) {
+      logger?.debug?.("bridge closed — reply not sent");
+      return;
+    }
     if (boundSessionRef === undefined) {
-      logger?.warn?.("cannot reply before bridge binding (no pspr/ready yet)");
+      logger?.warn?.("cannot reply before binding (no psp/ready yet)");
       return;
     }
     const envelope = { v: 1, type, sessionRef: boundSessionRef, payload };
@@ -151,6 +159,13 @@ export function attachPaneBridge(options: PaneBridgeOptions): PaneBridge {
     if (boundSessionRef !== undefined && message.sessionRef !== boundSessionRef) {
       stats.sessionMismatches += 1;
       fail(new PspError("SessionMismatch", "bridge message sessionRef does not match the bound session"), message);
+      return;
+    }
+    if (boundSessionRef === undefined && message.type !== "psp/ready") {
+      fail(
+        new PspError("SessionMismatch", "bridge not bound yet — the first accepted message must be psp/ready"),
+        message,
+      );
       return;
     }
     if (boundSessionRef === undefined) {
@@ -170,11 +185,12 @@ export function attachPaneBridge(options: PaneBridgeOptions): PaneBridge {
         return;
       }
       case "psp/zec-send-request": {
-        if (pendingReplies.has(message.payload.requestId)) {
+        if (pendingReplies.has(message.payload.requestId) || handledRequestIds.has(message.payload.requestId)) {
           fail(new SchemaViolationError("replayed requestId"), message);
           return;
         }
         pendingReplies.add(message.payload.requestId);
+        handledRequestIds.add(message.payload.requestId);
         stats.dispatched += 1;
         const requestId = message.payload.requestId;
         const address = message.payload.address;

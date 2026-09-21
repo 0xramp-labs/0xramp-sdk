@@ -23,6 +23,22 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
       - run: npm ci
+      - name: Release gate (tag ↔ package.json version ↔ CHANGELOG)
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json version v${VERSION}"
+            exit 1
+          fi
+          node -e "
+            const fs = require('node:fs');
+            const version = require('./package.json').version;
+            const changelog = fs.readFileSync('CHANGELOG.md', 'utf8');
+            if (!changelog.includes('## [' + version + ']')) {
+              console.error('CHANGELOG.md is missing a ## [' + version + '] entry');
+              process.exit(1);
+            }
+          "
       - run: npm run typecheck
       - run: npm test
       - run: npm run build

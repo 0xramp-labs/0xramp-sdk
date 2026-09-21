@@ -7,6 +7,7 @@
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -25,7 +26,7 @@ interface FixtureFile {
   data: unknown;
 }
 
-const FIXTURES_DIR = new URL("../../fixtures/psp-v1/", import.meta.url).pathname;
+const FIXTURES_DIR = fileURLToPath(new URL("../../fixtures/psp-v1/", import.meta.url));
 
 function loadFixtures(): { file: string; fixture: FixtureFile }[] {
   const files = readdirSync(FIXTURES_DIR).filter((f) => f.endsWith(".json") && f !== "manifest.json");

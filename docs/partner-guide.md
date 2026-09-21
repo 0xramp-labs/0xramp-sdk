@@ -41,7 +41,15 @@ origins (https, subdomains allowed). Never hide or rebrand the origin.
 
 ```tsx
 import { WebView } from "react-native-webview";
-import { isAllowedPaneNavigation, ALLOWED_PANE_HOST_SUFFIXES } from "@0xramp/sdk";
+import {
+  assertAllowedPaneNavigation,
+  isAllowedPaneNavigation,
+  ALLOWED_PANE_HOST_SUFFIXES,
+} from "@0xramp/sdk";
+
+// iOS: the initial `source` load never reaches onShouldStartLoadWithRequest,
+// so validate the session URL yourself before handing it to the WebView.
+assertAllowedPaneNavigation(session.sessionUrl);
 
 <WebView
   source={{ uri: session.sessionUrl }}
@@ -55,6 +63,11 @@ import { isAllowedPaneNavigation, ALLOWED_PANE_HOST_SUFFIXES } from "@0xramp/sdk
 
 - RN `postMessage` carries **no origin** — the navigation lock is your trust
   anchor. Enforce it for every request, including frames and redirects.
+- **iOS gap:** `onShouldStartLoadWithRequest` is **not** called for the
+  initial `source` load — always run
+  `assertAllowedPaneNavigation(session.sessionUrl)` before rendering the
+  WebView (the SDK's `createSession` already refuses non-allowlisted URLs,
+  so this is defense in depth).
 - Known gaps: passkeys and bank-app handoffs can misbehave inside WebViews.
   The pane detects this and deep-links out to the system browser (ladder,
   below) — keep `returnUrl` registered and handle its resume.
