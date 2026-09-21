@@ -1,0 +1,10 @@
+{
+  "kind": "api.response",
+  "name": "create-session-response",
+  "data": {
+    "sessionUrl": "https://0xramp.app/partner/zingo?sessionRef=sessGOLDEN00000001",
+    "sessionRef": "sessGOLDEN00000001",
+    "statusTicket": "v1.GOLDENFIXTUREwJk9mQ2sTvX7bN4rLp",
+    "expiresAt": "2026-09-21T12:00:00Z"
+  }
+}

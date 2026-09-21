@@ -1,0 +1,12 @@
+{
+  "kind": "return-url",
+  "name": "canonical-return-url",
+  "data": {
+    "url": "zingo://ramp?sessionRef=sessGOLDEN00000001&outcome=settled",
+    "expected": {
+      "sessionRef": "sessGOLDEN00000001",
+      "outcome": "settled",
+      "claimsTerminal": true
+    }
+  }
+}

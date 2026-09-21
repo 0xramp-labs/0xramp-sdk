@@ -1,0 +1,14 @@
+{
+  "name": "0xramp-example-electron-host",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Minimal Electron host for the 0xramp SDK — drives the sandbox pane end-to-end (PSP-v1).",
+  "type": "commonjs",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}

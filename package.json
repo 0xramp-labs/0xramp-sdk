@@ -1,0 +1,77 @@
+{
+  "name": "@0xramp/sdk",
+  "version": "0.0.1",
+  "description": "TypeScript SDK for wallet apps that host 0xramp.app in a WebView to offer ZEC ↔ fiat ramps (Pix, UPI, …). The wallet signs only ZEC sends; everything else runs inside 0xramp.app. Powered by P2P.me.",
+  "type": "module",
+  "license": "MIT",
+  "author": "0xramp Labs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xramp-labs/0xramp-sdk.git"
+  },
+  "bugs": {
+    "url": "https://github.com/0xramp-labs/0xramp-sdk/issues"
+  },
+  "keywords": [
+    "zcash",
+    "zec",
+    "ramp",
+    "offramp",
+    "onramp",
+    "pix",
+    "upi",
+    "psp",
+    "webview"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol/index.d.ts",
+      "default": "./dist/protocol/index.js"
+    },
+    "./session": {
+      "types": "./dist/session/index.d.ts",
+      "default": "./dist/session/index.js"
+    },
+    "./bridge": {
+      "types": "./dist/bridge/index.d.ts",
+      "default": "./dist/bridge/index.js"
+    },
+    "./units": {
+      "types": "./dist/units/index.d.ts",
+      "default": "./dist/units/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "fixtures",
+    "sandbox",
+    "docs",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "audit": "npm audit --omit=dev",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "typescript": "5.9.3",
+    "vitest": "5.0.1"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "kind": "bridge.pane-to-host",
+  "name": "psp-ready",
+  "data": {
+    "v": 1,
+    "type": "psp/ready",
+    "sessionRef": "sessGOLDEN00000001",
+    "payload": {
+      "sessionRef": "sessGOLDEN00000001",
+      "resolvedParams": { "direction": "sell", "fiat": "BRL", "asset": "ZEC" }
+    }
+  }
+}

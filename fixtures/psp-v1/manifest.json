@@ -1,0 +1,24 @@
+{
+  "protocol": "PSP-v1",
+  "version": 1,
+  "note": "Golden wire vectors for the Partner Session Protocol v1. Host-side CI (this SDK) and pane-side CI (0xramp.app) must both pass this exact set before any release. All values are synthetic: no real addresses, amounts, tickets, or PII.",
+  "kinds": {
+    "bridge.pane-to-host": "Full envelope as sent by the pane; validate with paneToHostMessageSchema.",
+    "bridge.host-to-pane": "Full envelope as sent by the host; validate with hostToPaneMessageSchema.",
+    "api.request": "HTTP request body for the partner sessions endpoint; validate with createSessionRequestSchema.",
+    "api.response": "HTTP response body from the partner sessions endpoints; validate with createSessionResponseSchema or sessionStatusResponseSchema.",
+    "return-url": "Deep-link return vector; parse with parseReturnUrl and compare to `expected`."
+  },
+  "files": [
+    "bridge.psp-ready.json",
+    "bridge.psp-zec-send-request.json",
+    "bridge.psp-zec-send-result.json",
+    "bridge.psp-zec-send-cancel.json",
+    "bridge.psp-result.json",
+    "bridge.psp-close.json",
+    "api.create-session-request.json",
+    "api.create-session-response.json",
+    "api.session-status-response.json",
+    "return-url.canonical.json"
+  ]
+}

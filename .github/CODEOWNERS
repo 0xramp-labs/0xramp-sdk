@@ -1,0 +1,8 @@
+# CODEOWNERS — wire-format surfaces are release-blocking.
+#
+# Protocol + fixtures: every change is reviewed by both maintainers.
+/src/protocol/    @Michae2xl @vinibarbosabr
+/fixtures/        @Michae2xl @vinibarbosabr
+
+# Everything else falls back to the default owner.
+*                 @vinibarbosabr

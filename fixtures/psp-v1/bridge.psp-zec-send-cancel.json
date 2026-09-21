@@ -1,0 +1,13 @@
+{
+  "kind": "bridge.host-to-pane",
+  "name": "psp-zec-send-cancel",
+  "data": {
+    "v": 1,
+    "type": "psp/zec-send-cancel",
+    "sessionRef": "sessGOLDEN00000001",
+    "payload": {
+      "requestId": "reqGOLDEN00000001",
+      "reason": "user declined"
+    }
+  }
+}

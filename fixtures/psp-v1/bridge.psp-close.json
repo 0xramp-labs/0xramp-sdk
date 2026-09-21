@@ -1,0 +1,12 @@
+{
+  "kind": "bridge.pane-to-host",
+  "name": "psp-close",
+  "data": {
+    "v": 1,
+    "type": "psp/close",
+    "sessionRef": "sessGOLDEN00000001",
+    "payload": {
+      "reason": "user finished"
+    }
+  }
+}

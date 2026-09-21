@@ -1,0 +1,122 @@
+<!doctype html>
+<!--
+  0xramp sandbox pane — reference implementation of the PANE half of PSP-v1
+  against canned responses. Static, dependency-free, no network calls.
+
+  Hosts use this to develop and CI-test the host side of the bridge with zero
+  0xramp access. Pair it with examples/electron-host or any WebView harness.
+
+  All data is synthetic. No real addresses, amounts, or tickets.
+  Powered by 0xramp · P2P.me
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>0xramp sandbox pane (PSP-v1)</title>
+    <style>
+      :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+      body { margin: 0; padding: 16px; }
+      header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+      h1 { font-size: 1.1rem; margin: 0; }
+      .badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 999px; background: #f59e0b22; color: #b45309; border: 1px solid #f59e0b55; }
+      .muted { color: gray; font-size: 0.85rem; }
+      .session { font-family: ui-monospace, monospace; font-size: 0.8rem; margin: 8px 0 16px; }
+      button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid currentColor; background: transparent; cursor: pointer; margin: 0 8px 8px 0; }
+      #log { border: 1px solid currentColor; border-radius: 8px; padding: 10px; font-family: ui-monospace, monospace; font-size: 0.78rem; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 12rem; }
+      .out { color: #047857; } .in { color: #1d4ed8; } .err { color: #b91c1c; }
+      footer { margin-top: 14px; font-size: 0.78rem; color: gray; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>0xramp sandbox pane</h1>
+      <span class="badge">SANDBOX — no real money</span>
+    </header>
+    <p class="muted">PSP-v1 pane half with canned responses. Post a message from the host window to see it handled.</p>
+    <div class="session" id="session"></div>
+
+    <button id="btn-ready">Re-send psp/ready</button>
+    <button id="btn-send">Simulate SELL → psp/zec-send-request</button>
+    <button id="btn-result">Simulate psp/result (settled)</button>
+    <button id="btn-close">Simulate psp/close</button>
+
+    <div id="log" aria-live="polite"></div>
+    <footer>Powered by 0xramp · P2P.me — sandbox fixtures are synthetic; never ship this pane to production.</footer>
+
+    <script>
+      "use strict";
+
+      var PSP_VERSION = 1;
+      var params = new URLSearchParams(location.search);
+      var sessionRef = params.get("sessionRef") || "sessSANDBOX00000001";
+      var requestCounter = 0;
+
+      document.getElementById("session").textContent = "sessionRef: " + sessionRef;
+      var logEl = document.getElementById("log");
+
+      function log(kind, text) {
+        var line = document.createElement("div");
+        line.className = kind;
+        line.textContent = "[" + new Date().toISOString().slice(11, 23) + "] " + text;
+        logEl.appendChild(line);
+      }
+
+      function post(type, payload) {
+        var envelope = { v: PSP_VERSION, type: type, sessionRef: sessionRef, payload: payload };
+        log("out", "→ " + JSON.stringify(envelope));
+        // DOM/browser hosts: window.parent.postMessage. Electron/RN hosts
+        // receive this via their injected channel (see examples/).
+        window.parent.postMessage(envelope, "*");
+      }
+
+      function validateEnvelope(raw) {
+        if (typeof raw !== "object" || raw === null) return "not an object";
+        if (raw.v !== PSP_VERSION) return "unsupported version";
+        if (raw.sessionRef !== sessionRef) return "sessionRef mismatch";
+        if (raw.type !== "psp/zec-send-result" && raw.type !== "psp/zec-send-cancel") return "unexpected type for pane";
+        if (typeof raw.payload !== "object" || raw.payload === null) return "payload missing";
+        if (typeof raw.payload.requestId !== "string") return "requestId missing";
+        if (raw.type === "psp/zec-send-result" && typeof raw.payload.txid !== "string") return "txid missing";
+        return null;
+      }
+
+      window.addEventListener("message", function (event) {
+        var problem = validateEnvelope(event.data);
+        if (problem) {
+          log("err", "✕ dropped inbound message: " + problem);
+          return;
+        }
+        log("in", "← " + JSON.stringify(event.data));
+      });
+
+      document.getElementById("btn-ready").addEventListener("click", function () {
+        post("psp/ready", { sessionRef: sessionRef, resolvedParams: { sandbox: true, direction: "sell", fiat: "BRL", asset: "ZEC" } });
+      });
+
+      document.getElementById("btn-send").addEventListener("click", function () {
+        requestCounter += 1;
+        post("psp/zec-send-request", {
+          requestId: "reqSANDBOX" + String(requestCounter).padStart(8, "0"),
+          address: "t1FakeAddrForFixtures9zqqqqqqqqqqqqq",
+          amountZat: "5000000",
+        });
+      });
+
+      document.getElementById("btn-result").addEventListener("click", function () {
+        post("psp/result", {
+          outcome: "settled",
+          fiat: { currency: "BRL", amountDisplay: "1234.56" },
+          ts: Date.now(),
+        });
+      });
+
+      document.getElementById("btn-close").addEventListener("click", function () {
+        post("psp/close", { reason: "user finished" });
+      });
+
+      log("out", "→ sandbox pane booted; sessionRef=" + sessionRef);
+      post("psp/ready", { sessionRef: sessionRef, resolvedParams: { sandbox: true, direction: "sell", fiat: "BRL", asset: "ZEC" } });
+    </script>
+  </body>
+</html>

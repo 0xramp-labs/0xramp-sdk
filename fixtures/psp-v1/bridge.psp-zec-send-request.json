@@ -1,0 +1,14 @@
+{
+  "kind": "bridge.pane-to-host",
+  "name": "psp-zec-send-request",
+  "data": {
+    "v": 1,
+    "type": "psp/zec-send-request",
+    "sessionRef": "sessGOLDEN00000001",
+    "payload": {
+      "requestId": "reqGOLDEN00000001",
+      "address": "t1FakeAddrForFixtures9zqqqqqqqqqqqqq",
+      "amountZat": "5000000"
+    }
+  }
+}

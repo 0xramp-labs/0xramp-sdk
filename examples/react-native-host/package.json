@@ -1,0 +1,17 @@
+{
+  "name": "0xramp-example-react-native-host",
+  "version": "0.0.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "description": "Minimal React Native (Expo) host for the 0xramp SDK — WebView pane with origin lock and the PSP-v1 bridge.",
+  "scripts": {
+    "start": "expo start"
+  },
+  "dependencies": {
+    "@0xramp/sdk": "0.0.1",
+    "expo": "~52.0.0",
+    "react": "18.3.1",
+    "react-native": "0.76.5",
+    "react-native-webview": "13.12.5"
+  }
+}

@@ -1,0 +1,120 @@
+<!doctype html>
+<!--
+  Electron host page: iframes the pane and runs the host half of PSP-v1.
+  Replace the vanilla-JS loop with @0xramp/sdk's attachPaneBridge in real
+  integrations (this example keeps the dependency graph at zero).
+
+  The "wallet" here is a fake: real hosts confirm in their own wallet UI,
+  sign with their wallet core (e.g. zingolib), broadcast, then reply.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; frame-src file: https:; style-src 'unsafe-inline'; script-src 'unsafe-inline';"
+    />
+    <title>0xramp example host (Electron)</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+      header { padding: 10px 14px; display: flex; justify-content: space-between; align-items: baseline; }
+      iframe { flex: 1; border: 1px solid #ccc; border-radius: 8px; margin: 0 14px 14px; }
+      .attribution { font-size: 0.8rem; color: gray; }
+      #status { font-size: 0.8rem; color: #1d4ed8; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>0xramp example host</strong>
+      <span id="status">bridge: waiting for psp/ready…</span>
+      <span class="attribution">Powered by 0xramp · P2P.me</span>
+    </header>
+    <iframe id="pane" title="0xramp pane" sandbox="allow-scripts allow-same-origin"></iframe>
+    <script>
+      "use strict";
+
+      var PSP_VERSION = 1;
+      var PANE_URL = new URLSearchParams(location.search).get("paneUrl") || "";
+      var paneSrc = PANE_URL || new URL("../../sandbox/sandbox-pane.html", location.href).href;
+      // Target origin for host→pane messages ("*" only for the file:// sandbox).
+      var paneTargetOrigin = PANE_URL ? new URL(PANE_URL).origin : "*";
+
+      var boundSessionRef = null; // binds on first accepted envelope, then strict
+      var seenRequestIds = new Set();
+      var fakeTxCounter = 0;
+      var status = document.getElementById("status");
+      var iframe = document.getElementById("pane");
+      iframe.src = paneSrc;
+
+      function setStatus(text) {
+        status.textContent = "bridge: " + text;
+      }
+
+      function validate(raw) {
+        if (typeof raw !== "object" || raw === null) return "not an object";
+        if (raw.v !== PSP_VERSION) return "unsupported version — refuse session";
+        if (typeof raw.sessionRef !== "string" || raw.sessionRef.length < 8) return "malformed sessionRef";
+        var paneToHost = ["psp/ready", "psp/zec-send-request", "psp/result", "psp/close"];
+        if (paneToHost.indexOf(raw.type) === -1) return "wrong-direction or unknown type";
+        if (typeof raw.payload !== "object" || raw.payload === null) return "payload missing";
+        if (boundSessionRef !== null && raw.sessionRef !== boundSessionRef) return "sessionRef mismatch";
+        return null;
+      }
+
+      function reply(type, sessionRef, payload) {
+        iframe.contentWindow.postMessage(
+          { v: PSP_VERSION, type: type, sessionRef: sessionRef, payload: payload },
+          paneTargetOrigin
+        );
+      }
+
+      window.addEventListener("message", function (event) {
+        if (event.source !== iframe.contentWindow) return;
+        if (window.pspElectron) window.pspElectron.sendToHost(event.data); // main-process log
+        var problem = validate(event.data);
+        if (problem) {
+          console.warn("[bridge] dropped:", problem, event.data);
+          return;
+        }
+        if (boundSessionRef === null) {
+          boundSessionRef = event.data.sessionRef;
+          console.log("[bridge] bound to session", boundSessionRef);
+        }
+        console.log("[bridge] pane →", JSON.stringify(event.data));
+
+        switch (event.data.type) {
+          case "psp/ready":
+            setStatus("ready (" + boundSessionRef.slice(0, 6) + "…)");
+            break;
+          case "psp/zec-send-request": {
+            var req = event.data.payload;
+            if (seenRequestIds.has(req.requestId)) return; // single-use requestId
+            seenRequestIds.add(req.requestId);
+            // Real hosts: native confirm sheet → wallet core signs → broadcast → txid.
+            var ok = window.confirm(
+              "Approve ZEC send?\n\n" + req.amountZat + " zatoshi → " + req.address + "\n\n(sandbox: no real funds move)"
+            );
+            if (ok) {
+              fakeTxCounter += 1;
+              reply("psp/zec-send-result", boundSessionRef, {
+                requestId: req.requestId,
+                txid: "e" + String(fakeTxCounter).padStart(63, "0"),
+              });
+              setStatus("zec-send-result sent");
+            } else {
+              reply("psp/zec-send-cancel", boundSessionRef, { requestId: req.requestId, reason: "user declined" });
+              setStatus("zec-send-cancel sent");
+            }
+            break;
+          }
+          case "psp/result":
+            setStatus("result: " + event.data.payload.outcome + " (advisory — reconcile via getStatus)");
+            break;
+          case "psp/close":
+            setStatus("pane closed — tear down gracefully");
+            break;
+        }
+      });
+    </script>
+  </body>
+</html>

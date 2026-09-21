@@ -1,0 +1,15 @@
+{
+  "kind": "bridge.pane-to-host",
+  "name": "psp-result",
+  "data": {
+    "v": 1,
+    "type": "psp/result",
+    "sessionRef": "sessGOLDEN00000001",
+    "payload": {
+      "outcome": "settled",
+      "zecTxid": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "fiat": { "currency": "BRL", "amountDisplay": "1234.56" },
+      "ts": 1758451200000
+    }
+  }
+}

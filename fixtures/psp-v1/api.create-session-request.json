@@ -1,0 +1,13 @@
+{
+  "kind": "api.request",
+  "name": "create-session-request",
+  "data": {
+    "partnerId": "zingo",
+    "direction": "sell",
+    "asset": "ZEC",
+    "fiat": "BRL",
+    "amount": "0.05",
+    "returnUrl": "zingo://ramp",
+    "locale": "en"
+  }
+}
