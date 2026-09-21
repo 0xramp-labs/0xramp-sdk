@@ -80,22 +80,11 @@ agent session.
 
 ## 6. Environment discipline (install scripts & agent ops)
 
-The library core is dependency-light by design; the `examples/` apps are the
-only places that pull heavy dependencies (Electron, Expo) whose install
-scripts execute host-level code.
+Library core is dependency-light. `examples/` (Electron, Expo, etc.) are
+opt-in for partner testing, not CI.
 
 - Routine verification (`npm run typecheck`, `npm test`, `npm run build`,
-  `npm pack --dry-run`, `npm run audit`) never needs example dependencies.
-  Do not install or run `examples/` packages as part of routine SDK work —
-  they are opt-in for partner testing, not part of CI.
-- npm install scripts are gated (`allowScripts`) in this workspace. Approving
-  a script, or bypassing a gate by invoking a package's installer directly,
-  is a host-trust decision that belongs to the owner — agents ask first,
-  every time, even for well-known packages (e.g. Electron's postinstall
-  downloads and unpacks a platform binary).
-- On any unexpected install/build failure: stop and report immediately.
-  Never retry-loop installs, and never work around a permission gate after
-  the first failure.
-- Nothing outside the workspace (global npm config, user caches such as
-  `~/.cache/electron`, shell/env files) is touched — even for reads —
-  without explicit owner approval.
+  `npm pack --dry-run`, `npm run audit`) must not install or run `examples/`.
+- Install scripts are gated (`allowScripts`). Do not approve or bypass a
+  lifecycle script in this repo without an explicit owner decision.
+- Unexpected install/build failure: stop and report. No retry-loop.
