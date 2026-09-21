@@ -10,7 +10,13 @@ Minimal RN host wiring the 0xramp pane into a `WebView`:
 - `onZecSendRequest` stubbed where your wallet core (e.g. zingolib) signs;
 - attribution **"Powered by 0xramp · P2P.me"** rendered at the entry point.
 
+The example links the SDK from the repo root (`file:../..` — the package is
+not on npm yet), so build the SDK first:
+
 ```bash
+# 0 — build the SDK (repo root):
+npm ci && npm run build
+
 # 1 — serve the sandbox pane (from the repo root):
 npx serve sandbox -l 8081
 

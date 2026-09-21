@@ -1,7 +1,6 @@
-# --- Confidentiality fence (see engineering-plan.md header) ---
-# This repo will be pushed PUBLIC as @0xramp-labs/0xramp-sdk.
-# Workbench material must never enter git history. Canonical private copies
-# live in ~/work/0xramp-workbench/ (local-only).
+# --- Confidentiality fence ---
+# This repo is public. Private workbench material must never enter git
+# history; canonical private copies live outside this repository (local-only).
 tmp/
 engineering-plan.md
 

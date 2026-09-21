@@ -4,7 +4,8 @@ TypeScript SDK for wallet apps that want to offer 0xramp ZEC ↔ local-fiat ramp
 
 Your wallet signs **only** ZEC sends from its own wallet core. Everything else — identity (passkeys), the Base account, P2P.me orders, quotes, limits, fraud screening, fiat payout — runs inside `0xramp.app`, unchanged.
 
-> **Status:** v0 (`0.x`), draft pilot. The Partner Session Protocol (PSP-v1) freezes at `0.1.0`; until then expect additive change only.
+> [!WARNING]
+> **Under active development — not ready for production use.** This is a v0 pilot (`0.x`): the public API and the PSP-v1 wire format are additive-only until the protocol freezes at `0.1.0`, and the package is not yet on npm (see [Install](#install)). Develop against the [sandbox pane](sandbox/) and the [golden fixtures](fixtures/) — expect changes.
 
 > **Attribution:** integrations must display **"Powered by 0xramp · P2P.me"** at the ramp entry point.
 
@@ -28,9 +29,16 @@ Details: [`docs/DESIGN.md`](docs/DESIGN.md) · full surface: [`docs/SPEC.md`](do
 
 ## Install
 
+> [!NOTE]
+> **Not published to npm yet** (v0 pilot) — install from the repository until the first tagged release:
+
 ```bash
-npm install @0xramp/sdk
+git clone https://github.com/0xramp-labs/0xramp-sdk.git
+cd 0xramp-sdk
+npm ci && npm run build   # tsc → dist/ (ESM + .d.ts)
 ```
+
+Then link the repo from your app: `"@0xramp/sdk": "file:<path-to-repo>"` in `package.json` (the [React Native example](examples/react-native-host/) links the repo root directly) or `npm link`.
 
 Pure ESM, strictly typed, React-free. Targets React Native, Electron, and browsers. Zero runtime dependencies besides schema validation.
 

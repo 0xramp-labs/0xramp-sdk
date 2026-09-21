@@ -1,6 +1,6 @@
 # `@0xramp/sdk` — Public Surface (v0)
 
-> **Status:** draft for partner review · **Protocol:** Partner Session Protocol v1 (PSP-v1) · **Package:** `@0xramp/sdk` `0.x` (ESM, TypeScript, React-free)
+> **Status:** under active development — not ready for production use · draft for partner review · **Protocol:** Partner Session Protocol v1 (PSP-v1) · **Package:** `@0xramp/sdk` `0.x` (ESM, TypeScript, React-free)
 >
 > Companion documents: [`DESIGN.md`](./DESIGN.md) (architecture and trust model) · sandbox pane and golden wire fixtures ship in the repository (`sandbox/`, `fixtures/`).
 
