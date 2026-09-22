@@ -14,6 +14,8 @@
     "bridge.psp-zec-send-request.json",
     "bridge.psp-zec-send-result.json",
     "bridge.psp-zec-send-cancel.json",
+    "bridge.psp-zec-send-pending.json",
+    "bridge.psp-zec-send-multiple.json",
     "bridge.psp-result.json",
     "bridge.psp-close.json",
     "api.create-session-request.json",

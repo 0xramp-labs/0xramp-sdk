@@ -32,6 +32,11 @@ export {
   type PaneBridgeStats,
   type PaneTransport,
   type ZecSendOutcome,
+  createZecSendStore,
+  createMemoryZecSendStore,
+  type ZecSendStore,
+  type ZecSendStorage,
+  type ZecSendRecord,
 } from "./bridge/index.js";
 export {
   assertAllowedPaneNavigation,

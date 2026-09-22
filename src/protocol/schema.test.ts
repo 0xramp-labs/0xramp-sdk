@@ -9,6 +9,7 @@ import {
   parseCreateSessionRequest,
   parseCreateSessionResponse,
   parseEnvelope,
+  parseHostToPaneMessage,
   parsePaneToHostMessage,
   parseSessionStatus,
   transparentZcashAddressSchema,
@@ -119,5 +120,23 @@ describe("hosted API response schemas", () => {
       amount: "0.05000000e0",
     });
     expect(res.ok).toBe(false);
+  });
+});
+
+describe("send recovery wire validation", () => {
+  const base = { v: 1, sessionRef: "sessGOLDEN00000001" };
+  const requestId = "reqGOLDEN00000001";
+  const txid = "a".repeat(64);
+  it.each([
+    { txid: `${txid}, ${"b".repeat(64)}` },
+    { txid, txids: [] },
+    { txid, txids: ["b".repeat(64)] },
+    { txid, txids: [txid, "not-a-txid"] },
+  ])("refuses ambiguous/invalid transaction evidence %j", payload => {
+    expect(parseHostToPaneMessage({ ...base, type: "psp/zec-send-result", payload: { requestId, ...payload } }).ok).toBe(false);
+  });
+  it("refuses unknown pending reasons and unbounded evidence", () => {
+    expect(parseHostToPaneMessage({ ...base, type: "psp/zec-send-pending", payload: { requestId, reason: "retry-now" } }).ok).toBe(false);
+    expect(parseHostToPaneMessage({ ...base, type: "psp/zec-send-pending", payload: { requestId, reason: "broadcast-unknown", txids: Array(33).fill(txid) } }).ok).toBe(false);
   });
 });

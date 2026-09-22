@@ -23,23 +23,22 @@ export function isAllowedPaneNavigation(url: string, allowedSuffixes: readonly s
   } catch {
     return false;
   }
-  if (parsed.protocol !== "https:") return false;
+  if (parsed.protocol !== "https:" || parsed.username !== "" || parsed.password !== "" || parsed.port !== "") return false;
   const host = parsed.hostname.toLowerCase();
   return allowedSuffixes.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
 }
 
 /** Check an Origin header / origin string against the allowlist. */
 export function isAllowedPaneOrigin(origin: string, allowedSuffixes: readonly string[] = ALLOWED_PANE_HOST_SUFFIXES): boolean {
-  return isAllowedPaneNavigation(origin, allowedSuffixes);
+  try {
+    const parsed = new URL(origin);
+    return parsed.pathname === "/" && parsed.search === "" && parsed.hash === "" && isAllowedPaneNavigation(origin, allowedSuffixes);
+  } catch { return false; }
 }
 
 /** Guarded variant used by adapters that must hard-abort on drift. */
 export function assertAllowedPaneNavigation(url: string, allowedSuffixes?: readonly string[]): void {
   if (!isAllowedPaneNavigation(url, allowedSuffixes)) {
-    throw new OriginLockViolationError(`navigation to non-0xramp origin is not allowed: ${truncate(url)}`);
+    throw new OriginLockViolationError("pane navigation origin is not allowed");
   }
-}
-
-function truncate(value: string): string {
-  return value.length > 128 ? `${value.slice(0, 128)}…` : value;
 }

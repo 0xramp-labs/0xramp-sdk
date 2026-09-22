@@ -33,6 +33,7 @@ import {
   type ZecSendCancelPayload,
   type ZecSendRequestPayload,
   type ZecSendResultPayload,
+  type ZecSendPendingPayload,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -143,12 +144,21 @@ const closePayloadSchema = z.object({
 const zecSendResultPayloadSchema = z.object({
   requestId: requestIdSchema,
   txid: zecTxidSchema,
+  txids: z.array(zecTxidSchema).min(1).max(32).optional(),
+}).refine((payload) => payload.txids === undefined || payload.txids.includes(payload.txid), {
+  message: "txids must include the deposit txid",
 }) satisfies z.ZodType<ZecSendResultPayload>;
 
 const zecSendCancelPayloadSchema = z.object({
   requestId: requestIdSchema,
   reason: z.string().max(256),
 }) satisfies z.ZodType<ZecSendCancelPayload>;
+
+const zecSendPendingPayloadSchema = z.object({
+  requestId: requestIdSchema,
+  reason: z.enum(["in-progress", "broadcast-unknown", "multiple-transactions", "storage-unavailable"]),
+  txids: z.array(zecTxidSchema).min(1).max(32).optional(),
+}) satisfies z.ZodType<ZecSendPendingPayload>;
 
 const readyMessageSchema = z.object({
   ...envelopeMeta,
@@ -180,6 +190,11 @@ const zecSendCancelMessageSchema = z.object({
   type: z.literal("psp/zec-send-cancel"),
   payload: zecSendCancelPayloadSchema,
 });
+const zecSendPendingMessageSchema = z.object({
+  ...envelopeMeta,
+  type: z.literal("psp/zec-send-pending"),
+  payload: zecSendPendingPayloadSchema,
+});
 
 /** Full catalog of pane → host messages (v0, complete). */
 export const paneToHostMessageSchema = z.discriminatedUnion("type", [
@@ -193,6 +208,7 @@ export const paneToHostMessageSchema = z.discriminatedUnion("type", [
 export const hostToPaneMessageSchema = z.discriminatedUnion("type", [
   zecSendResultMessageSchema,
   zecSendCancelMessageSchema,
+  zecSendPendingMessageSchema,
 ]) satisfies z.ZodType<HostToPaneMessage>;
 
 /** Generic envelope check (type/catalog validation happens per direction). */

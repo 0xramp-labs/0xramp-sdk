@@ -5,3 +5,5 @@
 export * from "./bridge.js";
 export * from "./transport.js";
 export * from "./origin.js";
+export { createZecSendStore, createMemoryZecSendStore } from "./sendStore.js";
+export type { ZecSendStore, ZecSendStorage, ZecSendRecord } from "./sendStore.js";
