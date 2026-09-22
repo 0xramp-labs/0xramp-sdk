@@ -11,11 +11,15 @@ A TypeScript SDK for wallet apps that want to offer 0xramp ZEC ↔ local-fiat ra
 ## Install & config
 
 ```ts
-import { createRampClient } from "@0xramp/sdk";
+import { createRampClient, createZecSendStore } from "@0xramp/sdk";
+
+const sendStore = createZecSendStore(secureWalletStorage); // one wallet-scoped get/set adapter
 
 const ramp = createRampClient({
   environment: "production",        // "production" | "staging"
   partnerId: "<issued-by-0xramp>",  // public identifier; onboarding via 0xramp
+  sendStore,                       // required when supplying a wallet callback
+  // optional: paneOrigins (exact HTTPS origins), requestTimeoutMs (default 15000)
   // optional: fetch, logger, locale ("pt" | "en" | "es" | "hi" | "id")
 });
 ```
@@ -30,30 +34,34 @@ const { sessionUrl, sessionRef, statusTicket, expiresAt } = await ramp.createSes
   fiat: "BRL",                  // ISO code of a corridor 0xramp serves
   amountAsset: "0.05",          // optional decimal string (display units; exact quote is made in 0xramp.app)
   zecReceiver: "t1…",           // BUY: transparent Zcash address where ZEC lands
-  returnUrl: "zingo://ramp",    // optional deep-link back into your app
+  returnUrl: "mywallet://ramp", // register the scheme in your own app
+  partnerSessionId,             // persist before POST; correlation only, not idempotency
 });
 
-// 2 — host the pane: load sessionUrl in your WebView with navigation locked to 0xramp origins
+// 2 — persist the session securely. Attach the bridge before loading the WebView.
 
 // 3 — wire the pane bridge (the pane drives; you handle)
 const pane = ramp.attachPaneBridge({
   transport: /* you provide: postMessage/IPC adapter — see examples */,
-  onZecSendRequest: async ({ requestId, address, amountZat }) => {
+  sessionRef,
+  onZecSendRequest: async (request, { signal }) => {
     // SELL only. Confirm with the user in YOUR wallet UI, sign with YOUR wallet core,
     // broadcast, then return the txid.
-    const txid = await myWallet.sendToTransparent(address, amountZat);
-    return { txid };                       // or throw / return { cancel: true, reason }
+    return myWallet.confirmAndSend(request, { signal });
   },
-  onResult:   (r) => saveReceipt(r),       // advisory terminal feedback
+  onResult:  () => { void refreshAuthoritativeStatus(); }, // advisory only
+  onSendRecoveryRequired: () => showRecoveryScreen(),
   onReady:    (r) => markSessionLoaded(r), // pane boot confirmation
   onClose:    () => teardownPane(),
 });
+if (!ramp.isAllowedPaneUrl(sessionUrl)) throw new Error("origin refused");
+loadWebView(sessionUrl); // also apply the same policy to every navigation
 
 // 4 — read authoritative status (read-only, ticketed)
 const status = await ramp.getStatus(sessionRef); // { outcome, zecTxids?, fiat?, terminal, updatedAt }
 
 // 5 — parse a return deep-link (advisory; reconcile via getStatus or your own chain view)
-const result = ramp.parseReturnUrl("zingo://ramp?…");
+const result = ramp.parseReturnUrl("mywallet://ramp?…");
 ```
 
 ## Session lifecycle
@@ -67,7 +75,7 @@ The SDK surfaces this as a small enum mapped 1:1 from the server status projecti
 | Event | When | Your obligation |
 |---|---|---|
 | `psp/ready` | pane loaded | record; no action |
-| `psp/zec-send-request` | SELL, 1Click route reserved | confirm + sign + broadcast from your wallet; reply result/cancel |
+| `psp/zec-send-request` | SELL, 1Click route reserved | durable claim → confirm + sign + broadcast; result/cancel/pending |
 | `psp/result` | flow terminal | display; treat as advisory |
 | `psp/close` | user finished | tear down pane gracefully |
 
@@ -75,15 +83,43 @@ Host → pane replies:
 
 | Message | Payload | Notes |
 |---|---|---|
-| `psp/zec-send-result` | `{ requestId, txid }` | response to a send request after wallet confirm + broadcast |
-| `psp/zec-send-cancel` | `{ requestId, reason }` | user declined in the native confirm sheet |
+| `psp/zec-send-result` | `{ requestId, txid, txids? }` | identified deposit transaction; optional list includes `txid` |
+| `psp/zec-send-cancel` | `{ requestId, reason }` | confirmed no broadcast (for example native confirmation declined) |
+| `psp/zec-send-pending` | `{ requestId, reason, txids? }` | unresolved send; reconcile, never automatically resend |
+
+Pending reasons: `in-progress`, `broadcast-unknown`, `multiple-transactions`,
+`storage-unavailable`. Transaction arrays contain 1–32 individual 64-hex IDs;
+they are evidence for reconciliation, not proof of fiat settlement. A wallet
+callback may return `{ txids }`, but multiple IDs without an identified
+deposit `txid` stay pending. Throws and malformed wallet results also stay
+pending. This is an additive PSP-v1 message; both host and pane must support
+the new fixtures before a live pilot.
 
 Rules enforced by the SDK bridge:
 
-- Every envelope is validated against the PSP-v1 schema **before** handler dispatch; violations fail closed (session aborted, not degraded silently).
+- Every envelope is validated **before** dispatch; malformed messages are dropped. Hosts can close on `onProtocolError` (the examples do).
 - Unknown protocol `v` → `UnsupportedProtocolVersion`; the session is refused.
-- `requestId` pairs request/response and is single-use; replays are rejected.
+- `requestId` pairs request/response: same-bridge replays are rejected. Across bridge instances a durable journal replays the recorded outcome or returns pending without signing again. The pane MUST reuse the same ID and payment details after reconnect; it MUST NOT create a fresh ID to retry an unresolved payment.
 - A message whose `sessionRef` does not match the host's session is dropped and counted (surfaced via the logger, never dispatched).
+- `psp/ready` cannot bind the bridge unless its nested `sessionRef` matches the envelope. An explicit host session binding is preferred.
+- `psp/close` closes the bridge before invoking the host callback. Queued sends do not start after close; in-flight wallet work receives an abort signal and any later outcome is persisted.
+
+## Recovery and client additions (0.0.2)
+
+- `createZecSendStore(storage)` supplies a journal over secure `get`/`set`
+  storage. Reuse one adapter object per wallet; cross-process use requires
+  an atomic implementation of `ZecSendStore.claim`. Memory storage is sandbox-only.
+- `restoreSession(saved)` revalidates the full session and origin and restores
+  the status ticket without a POST. Persist URLs/tickets securely.
+- `isAllowedPaneUrl(url)` exposes the client origin policy. Custom deployments
+  default to their exact API origin; configure explicit `paneOrigins` when needed.
+- `requestTimeoutMs` bounds fetch plus body parsing; redirects and automatic
+  retries are disabled. A timed-out POST is unresolved until reconciled.
+- `sendZecSendResult` and `sendZecSendCancel` return `Promise<void>` and persist
+  before replying. They only accept requests known to that bridge. Manual
+  recovery must be backed by wallet history, and persistence failures reject.
+- `onSendRecoveryRequired` receives the pending reason/known transaction IDs.
+  Display recovery without launching another wallet send.
 
 ## Amounts, errors & security posture
 
@@ -96,7 +132,7 @@ Rules enforced by the SDK bridge:
 
 ## Conformance
 
-The repository's `fixtures/` directory is the golden wire set for PSP-v1 (every bridge message, session create/status shape, and canonical serialization). SDK CI validates the host side against it; the `0xramp.app` pane validates the pane side against the same set. `sandbox/sandbox-pane.html` implements the pane half of PSP-v1 against canned responses so you can develop and CI-test a host with no 0xramp access.
+The repository's `fixtures/` directory is the golden wire set for PSP-v1 (bridge messages and session create/status shapes). SDK CI validates the host against it. The deployed pane must independently pass the same fixtures; this repository does not prove that deployment. `sandbox/sandbox-pane.html` supplies synthetic browser and React Native message paths without live 0xramp access. See the [readiness checklist](partner-readiness.md) for evidence required beyond simulations.
 
 ## Non-goals (v0)
 

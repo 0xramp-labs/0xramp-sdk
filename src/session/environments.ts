@@ -44,6 +44,9 @@ function normalizeBaseUrl(value: string): string {
   if (url.protocol !== "https:") {
     throw new ConfigError("apiBaseUrl must use https");
   }
+  if (url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") {
+    throw new ConfigError("apiBaseUrl must be an origin without credentials, query, or fragment");
+  }
   if (url.pathname !== "/" && url.pathname !== "") {
     throw new ConfigError("apiBaseUrl must not include a path");
   }

@@ -4,7 +4,7 @@
  * for convenience.
  *
  * Security contract implemented here:
- * - the client holds at most `sessionRef + statusTicket` (read-only, non-sensitive pair);
+ * - status tickets are read-only bearer credentials and must be stored securely;
  * - logs are redacted by default (`sessionRef` hashed, tickets fully redacted);
  * - server responses are schema-validated before they reach host code;
  * - no keys, no signing, no money math.
@@ -22,6 +22,8 @@ import {
   parseCreateSessionRequest,
   parseCreateSessionResponse,
   parseSessionStatus,
+  sessionRefSchema,
+  statusTicketSchema,
 } from "../protocol/schema.js";
 import {
   redactSessionRef,
@@ -39,6 +41,7 @@ import {
   type PaneTransport,
 } from "../bridge/bridge.js";
 import { isAllowedPaneNavigation } from "../bridge/origin.js";
+import type { ZecSendStore } from "../bridge/sendStore.js";
 import { parseReturnUrl, type ParsedReturnUrl } from "./returnUrl.js";
 import { PARTNER_SESSIONS_PATH, resolveApiBaseUrl, type SdkEnvironment } from "./environments.js";
 export { parseReturnUrl };
@@ -46,17 +49,6 @@ export type { ParsedReturnUrl };
 
 /** Cap on status tickets kept in memory (insertion-ordered eviction). */
 const MAX_TRACKED_SESSIONS = 16;
-
-/**
- * Allowlist suffix for the pane origin, derived from the configured API
- * origin: the hostname itself, minus one leading label when present (so an
- * API on `api.<domain>` still accepts a pane on a sibling subdomain).
- */
-function paneOriginSuffix(apiOrigin: string): string {
-  const host = new URL(apiOrigin).hostname.toLowerCase();
-  const labels = host.split(".");
-  return labels.length > 2 ? labels.slice(1).join(".") : host;
-}
 
 /**
  * Redact the trailing sessionRef segment of a request path before it may
@@ -88,6 +80,12 @@ export interface RampClientConfig {
   partnerId: string;
   /** Override the API origin (mandatory for staging). Must be https, no path. */
   apiBaseUrl?: string;
+  /** Explicit, exact HTTPS pane origins; custom API deployments default to their own origin. */
+  paneOrigins?: readonly string[];
+  /** Durable, wallet-scoped send journal, shared across bridge instances. */
+  sendStore?: ZecSendStore;
+  /** Network deadline; a failed create request must be reconciled, never retried automatically. */
+  requestTimeoutMs?: number;
   /** Injectable fetch (defaults to globalThis.fetch). Provide in RN/Electron if needed. */
   fetch?: typeof fetch;
   /** Logger hook; receives redacted identifiers only. */
@@ -97,6 +95,10 @@ export interface RampClientConfig {
 }
 
 export interface CreateSessionInput {
+  /** Persist a cryptographically random key before create; reuse it with the
+   * identical input for explicit recovery on an idempotency-enabled API.
+   * Public partnerSessionId is correlation only, never a recovery credential. */
+  idempotencyKey?: string;
   direction: SessionDirection;
   asset: RampAsset;
   /** ISO 4217 code of a corridor 0xramp serves (server-authoritative). */
@@ -145,11 +147,16 @@ export interface AttachPaneBridgeOptions extends PaneBridgeHandlers {
    * match strictly from then on.
    */
   sessionRef?: string;
+  sendStore?: ZecSendStore;
 }
 
 export interface RampClient {
   /** Channel 1 — open a ramp session (variant B: ticketed, stateful). */
   createSession(input: CreateSessionInput): Promise<RampSession>;
+  /** Validate and restore a session from the host's secure storage. */
+  restoreSession(session: RampSession): RampSession;
+  /** The same exact origin policy used for create/restore; use for every WebView load. */
+  isAllowedPaneUrl(url: string): boolean;
   /** Channel 4 — authoritative, read-only, ticketed status. */
   getStatus(sessionRef: string, options?: GetStatusOptions): Promise<SessionStatus>;
   /** Channel 3 — attach the host-side pane bridge to your transport. */
@@ -167,6 +174,27 @@ export function createRampClient(config: RampClientConfig): RampClient {
     throw new PspError("ConfigError", "partnerId is malformed (expected 1–64 chars of [A-Za-z0-9_-])");
   }
   const { apiBaseUrl } = resolveApiBaseUrl(config.environment, config.apiBaseUrl);
+  const timeoutMs = config.requestTimeoutMs ?? 15_000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) {
+    throw new ConfigError("requestTimeoutMs must be an integer between 1 and 300000");
+  }
+  const configuredOrigins = config.paneOrigins ?? (config.apiBaseUrl === undefined ? undefined : [apiBaseUrl]);
+  const paneOrigins = configuredOrigins?.map(origin => {
+    let url: URL;
+    try { url = new URL(origin); } catch { throw new ConfigError("invalid pane origin"); }
+    if (url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.pathname !== "/" || url.search !== "" || url.hash !== "") {
+      throw new ConfigError("paneOrigins must contain exact HTTPS origins");
+    }
+    return url.origin;
+  });
+  if (paneOrigins?.length === 0) throw new ConfigError("paneOrigins must not be empty");
+  function isAllowedPaneUrl(value: string): boolean {
+    if (paneOrigins === undefined) return isAllowedPaneNavigation(value);
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" && url.username === "" && url.password === "" && paneOrigins.includes(url.origin);
+    } catch { return false; }
+  }
   const fetchImpl: typeof fetch | undefined =
     config.fetch ?? (globalThis as { fetch?: typeof fetch }).fetch;
   if (typeof fetchImpl !== "function") {
@@ -177,9 +205,23 @@ export function createRampClient(config: RampClientConfig): RampClient {
   const sessions = new Map<string, StoredSession>();
   let lastCreatedSessionRef: string | undefined;
 
+  function rememberSession(raw: RampSession): RampSession {
+    const parsed = parseCreateSessionResponse(raw);
+    if (!parsed.ok) throw parsed.error;
+    const session = parsed.value;
+    if (!isAllowedPaneUrl(session.sessionUrl)) throw new OriginLockViolationError("session page is outside the configured pane origins");
+    sessions.set(session.sessionRef, { statusTicket: session.statusTicket });
+    if (sessions.size > MAX_TRACKED_SESSIONS) {
+      const oldest = sessions.keys().next().value;
+      if (oldest !== undefined) sessions.delete(oldest);
+    }
+    lastCreatedSessionRef = session.sessionRef;
+    return session;
+  }
+
   async function request<T>(
     path: string,
-    init: RequestInit & { authTicket?: string },
+    init: RequestInit & { authTicket?: string; idempotencyKey?: string },
     parse: (body: unknown) => { ok: true; value: T } | { ok: false; error: PspError },
   ): Promise<T> {
     const headers: Record<string, string> = {
@@ -191,39 +233,39 @@ export function createRampClient(config: RampClientConfig): RampClient {
     if (init.authTicket !== undefined) {
       headers["authorization"] = `PartnerTicket v1.${init.authTicket}`;
     }
-    let response: Response;
-    try {
-      response = await doFetch(`${apiBaseUrl}${path}`, {
+    if (init.idempotencyKey !== undefined) headers["idempotency-key"] = init.idempotencyKey;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => { controller.abort(); reject(new NetworkUnavailableError("hosted API request timed out; reconcile before retrying")); }, timeoutMs);
+    });
+    async function perform(): Promise<T> {
+      const response = await doFetch(`${apiBaseUrl}${path}`, {
         method: init.method,
         headers,
         body: init.body,
+        signal: controller.signal,
+        redirect: "error",
       });
-    } catch (cause) {
-      throw new NetworkUnavailableError(
-        `could not reach the 0xramp hosted API: ${cause instanceof Error ? cause.name : "unknown error"}`,
-      );
+      if (response.status === 429) throw new PartnerQuotaExceededError();
+      if (!response.ok) throw new ApiError(response.status, `hosted API returned ${response.status} for ${redactedRequestPath(path)}`);
+      let body: unknown;
+      try { body = await response.json(); } catch { throw new SchemaViolationError("hosted API response was not valid JSON"); }
+      const parsed = parse(body);
+      if (!parsed.ok) throw parsed.error;
+      return parsed.value;
     }
-    if (response.status === 429) {
-      throw new PartnerQuotaExceededError();
-    }
-    if (!response.ok) {
-      throw new ApiError(response.status, `hosted API returned ${response.status} for ${redactedRequestPath(path)}`);
-    }
-    let body: unknown;
-    try {
-      body = await response.json();
-    } catch {
-      throw new SchemaViolationError("hosted API response was not valid JSON");
-    }
-    const parsed = parse(body);
-    if (!parsed.ok) {
-      throw parsed.error;
-    }
-    return parsed.value;
+    try { return await Promise.race([perform(), deadline]); } catch (cause) {
+      if (cause instanceof PspError) throw cause;
+      throw new NetworkUnavailableError("could not reach the 0xramp hosted API; reconcile before retrying");
+    } finally { clearTimeout(timer); }
   }
 
   return {
     async createSession(input: CreateSessionInput): Promise<RampSession> {
+      if (input.idempotencyKey !== undefined && (typeof input.idempotencyKey !== "string" || !/^[A-Za-z0-9_-]{32,128}$/.test(input.idempotencyKey))) {
+        throw new ConfigError("idempotencyKey must be 32–128 characters of [A-Za-z0-9_-]");
+      }
       const body: CreateSessionRequestBody = {
         partnerId: config.partnerId,
         direction: input.direction,
@@ -241,26 +283,19 @@ export function createRampClient(config: RampClientConfig): RampClient {
       }
       const res = await request<CreateSessionResponseBody>(
         PARTNER_SESSIONS_PATH,
-        { method: "POST", body: JSON.stringify(checked.value) },
+        { method: "POST", body: JSON.stringify(checked.value), idempotencyKey: input.idempotencyKey },
         parseCreateSessionResponse,
       );
-      if (!isAllowedPaneNavigation(res.sessionUrl, [paneOriginSuffix(apiBaseUrl)])) {
-        throw new OriginLockViolationError(
-          "hosted API returned a sessionUrl outside the pane origin allowlist — refusing the session",
-        );
-      }
-      sessions.set(res.sessionRef, { statusTicket: res.statusTicket });
-      if (sessions.size > MAX_TRACKED_SESSIONS) {
-        const oldest = sessions.keys().next().value;
-        if (oldest !== undefined) sessions.delete(oldest);
-      }
-      lastCreatedSessionRef = res.sessionRef;
+      rememberSession(res);
       logger?.info?.("partner session created", {
         sessionRef: redactSessionRef(res.sessionRef),
         expiresAt: res.expiresAt,
       });
       return res;
     },
+
+    restoreSession: rememberSession,
+    isAllowedPaneUrl,
 
     async getStatus(sessionRef: string, options?: GetStatusOptions): Promise<SessionStatus> {
       const ticket = options?.statusTicket ?? sessions.get(sessionRef)?.statusTicket;
@@ -269,6 +304,9 @@ export function createRampClient(config: RampClientConfig): RampClient {
           "ConfigError",
           "no status ticket available for this sessionRef — pass one via options.statusTicket",
         );
+      }
+      if (!sessionRefSchema.safeParse(sessionRef).success || !statusTicketSchema.safeParse(ticket).success) {
+        throw new ConfigError("invalid session reference or status ticket");
       }
       const res = await request<SessionStatusResponseBody>(
         `${PARTNER_SESSIONS_PATH}/${encodeURIComponent(sessionRef)}`,
@@ -291,7 +329,7 @@ export function createRampClient(config: RampClientConfig): RampClient {
     },
 
     attachPaneBridge(options: AttachPaneBridgeOptions): PaneBridge {
-      const { transport, sessionRef = lastCreatedSessionRef, ...handlers } = options;
+      const { transport, sessionRef = lastCreatedSessionRef, sendStore = config.sendStore, ...handlers } = options;
       if (options.sessionRef === undefined && sessionRef !== undefined) {
         logger?.debug?.("no sessionRef given — binding the bridge to the most recently created session", {
           sessionRef: redactSessionRef(sessionRef),
@@ -302,6 +340,7 @@ export function createRampClient(config: RampClientConfig): RampClient {
         handlers,
         ...(sessionRef !== undefined ? { sessionRef } : {}),
         logger,
+        ...(sendStore !== undefined ? { sendStore } : {}),
       });
     },
 

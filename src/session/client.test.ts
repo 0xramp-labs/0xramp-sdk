@@ -32,9 +32,64 @@ function makeConfig(fetchMock: ReturnType<typeof vi.fn>, overrides: Partial<Ramp
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("createRampClient", () => {
+  it("carries an optional recovery key only in the header and never retries automatically", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(201, SESSION_RESPONSE));
+    const client = createRampClient(makeConfig(fetchMock));
+    const input = { direction: "sell" as const, asset: "ZEC" as const, fiat: "BRL", idempotencyKey: "a".repeat(43) };
+    await client.createSession(input);
+    expect(fetchMock.mock.calls[0]![1].headers["idempotency-key"]).toBe(input.idempotencyKey);
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).not.toHaveProperty("idempotencyKey");
+    fetchMock.mockRejectedValueOnce(new Error("response lost"));
+    await expect(client.createSession(input)).rejects.toThrow("could not reach");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await expect(client.createSession({ ...input, idempotencyKey: "guessable" })).rejects.toThrow("idempotencyKey");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+  it("locks a custom deployment to the exact origin, including its port", () => {
+    const client = createRampClient(makeConfig(vi.fn(), { environment: "staging", apiBaseUrl: "https://partner.hosting.example" }));
+    expect(client.isAllowedPaneUrl("https://partner.hosting.example/session")).toBe(true);
+    for (const url of ["https://other.hosting.example/session", "https://sub.partner.hosting.example/", "https://partner.hosting.example:8443/", "https://user@partner.hosting.example/"]) {
+      expect(client.isAllowedPaneUrl(url)).toBe(false);
+    }
+  });
+
+  it("supports separately issued exact pane origins without trusting sibling tenants", () => {
+    const client = createRampClient(makeConfig(vi.fn(), { apiBaseUrl: "https://api.hosting.example", paneOrigins: ["https://pane.hosting.example"] }));
+    expect(client.isAllowedPaneUrl("https://pane.hosting.example/session")).toBe(true);
+    expect(client.isAllowedPaneUrl("https://api.hosting.example/session")).toBe(false);
+    expect(client.isAllowedPaneUrl("https://other.hosting.example/session")).toBe(false);
+  });
+
+  it.each(["https://user:pass@api.example", "https://api.example/?token=example", "https://api.example/#fragment"])("rejects unsafe API configuration %s", apiBaseUrl => {
+    expect(() => createRampClient(makeConfig(vi.fn(), { apiBaseUrl }))).toThrow();
+  });
+
+  it("restores tickets without creating a new session and refuses unsafe restored URLs", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { outcome: "created", terminal: false, updatedAt: "2026-09-21T12:00:00Z" }));
+    const client = createRampClient(makeConfig(fetchMock));
+    expect(client.restoreSession(SESSION_RESPONSE)).toEqual(SESSION_RESPONSE);
+    expect(fetchMock).not.toHaveBeenCalled();
+    await client.getStatus(SESSION_RESPONSE.sessionRef);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "GET", redirect: "error", headers: { authorization: `PartnerTicket v1.${SESSION_RESPONSE.statusTicket}` } });
+    expect(() => client.restoreSession({ ...SESSION_RESPONSE, sessionUrl: "https://evil.example/" })).toThrow();
+  });
+
+  it.each(["headers", "body"])("bounds waiting for response %s and never retries a POST", async phase => {
+    vi.useFakeTimers();
+    const forever = new Promise<never>(() => {});
+    const fetchMock = vi.fn().mockImplementation(() => phase === "headers" ? forever : Promise.resolve({ ok: true, status: 200, json: () => forever }));
+    const client = createRampClient(makeConfig(fetchMock, { requestTimeoutMs: 50 }));
+    const request = client.createSession({ direction: "sell", asset: "ZEC", fiat: "BRL" });
+    const expectation = expect(request).rejects.toMatchObject({ code: "NetworkUnavailable" });
+    await vi.advanceTimersByTimeAsync(50); await expectation;
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[1]?.signal.aborted).toBe(true);
+  });
+
   it("rejects malformed partnerId at construction", () => {
     expect(() => createRampClient(makeConfig(vi.fn(), { partnerId: "bad id!" }))).toThrow();
   });

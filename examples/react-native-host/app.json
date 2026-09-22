@@ -1,0 +1,8 @@
+{
+  "expo": {
+    "name": "0xramp Partner Example",
+    "slug": "0xramp-partner-example",
+    "scheme": "ramp-example",
+    "plugins": ["expo-secure-store"]
+  }
+}

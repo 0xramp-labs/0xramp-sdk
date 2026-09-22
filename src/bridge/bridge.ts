@@ -1,68 +1,29 @@
-/**
- * Host-side pane bridge (PSP-v1 channel 3).
- *
- * The pane drives; the host handles. Fail-closed posture:
- * - every envelope is schema-validated before handler dispatch;
- * - unknown envelope `v` → `UnsupportedProtocolVersion`, session refused (listeners detached);
- * - the bridge binds on the first accepted `psp/ready` — any other message on an
- *   unbound bridge fails closed;
- * - `sessionRef` mismatch → message dropped and counted, never dispatched;
- * - wrong-direction messages → schema violation, dropped;
- * - `requestId` is single-use forever; replays (in flight or after completion) are dropped;
- * - schema violations never crash the host — they surface via `onProtocolError`/logger.
- */
-import {
-  PspError,
-  SchemaViolationError,
-  UnsupportedProtocolVersionError,
-} from "../protocol/errors.js";
-import {
-  hasUnknownEnvelopeVersion,
-  parseHostToPaneMessage,
-  parsePaneToHostMessage,
-} from "../protocol/schema.js";
-import {
-  redactSessionRef,
-  type ClosePayload,
-  type PaneToHostMessage,
-  type ReadyPayload,
-  type ResultPayload,
-  type ZecSendRequestPayload,
-} from "../protocol/types.js";
+import { ConfigError, PspError, SchemaViolationError, UnsupportedProtocolVersionError } from "../protocol/errors.js";
+import { hasUnknownEnvelopeVersion, parseHostToPaneMessage, parsePaneToHostMessage, sessionRefSchema } from "../protocol/schema.js";
+import { redactSessionRef, type ClosePayload, type HostToPaneMessage, type PaneToHostMessage, type ReadyPayload, type ResultPayload, type ZecSendPendingPayload, type ZecSendRequestPayload } from "../protocol/types.js";
+import { readSendRecord, sendReply, type ZecSendOutcome, type ZecSendStore } from "./sendStore.js";
 import type { PaneTransport } from "./transport.js";
 
 export type { PaneTransport } from "./transport.js";
-
-/** Outcome of a host handling `psp/zec-send-request`. */
-export type ZecSendOutcome = { txid: string } | { cancel: true; reason?: string };
+export type { ZecSendOutcome } from "./sendStore.js";
 
 export interface PaneBridgeHandlers {
-  /** Pane boot handshake — confirms the session actually loaded. */
   onReady?(payload: ReadyPayload): void;
-  /**
-   * SELL only: confirm with the user in YOUR wallet UI, sign with YOUR wallet
-   * core, broadcast, then return `{ txid }` — or `{ cancel: true, reason }`
-   * if the user declined. Throwing answers the pane with a generic cancel.
-   */
-  onZecSendRequest?(payload: ZecSendRequestPayload): Promise<ZecSendOutcome> | ZecSendOutcome;
-  /** Advisory terminal feedback. Never authoritative on its own. */
+  /** Return cancel only when no broadcast occurred; throws require reconciliation. */
+  onZecSendRequest?(payload: ZecSendRequestPayload, context: { signal: AbortSignal }): Promise<ZecSendOutcome> | ZecSendOutcome;
+  onSendRecoveryRequired?(payload: ZecSendPendingPayload): void;
+  /** Advisory only; reconcile through the ticketed status API. */
   onResult?(payload: ResultPayload): void;
-  /** User finished/closed — tear down the pane gracefully. */
   onClose?(payload: ClosePayload): void;
-  /** Protocol-level failures (version, schema, session mismatch). Optional. */
   onProtocolError?(error: PspError, raw: unknown): void;
 }
 
 export interface PaneBridgeOptions {
   transport: PaneTransport;
   handlers: PaneBridgeHandlers;
-  /**
-   * Session this bridge is bound to. When omitted, the bridge binds to the
-   * sessionRef of the first accepted `psp/ready` and enforces the match
-   * strictly from then on (other messages before binding fail closed).
-   */
   sessionRef?: string;
-  /** Logger hook; receives redacted identifiers only. */
+  /** Required for a signing callback; persist and namespace records per wallet. */
+  sendStore?: ZecSendStore;
   logger?: {
     debug?(message: string, meta?: Record<string, unknown>): void;
     info?(message: string, meta?: Record<string, unknown>): void;
@@ -80,202 +41,189 @@ export interface PaneBridgeStats {
 }
 
 export interface PaneBridge {
-  /** Reply to a `zec-send-request` with a successful broadcast. */
-  sendZecSendResult(requestId: string, txid: string): void;
-  /** Reply to a `zec-send-request` with a user decline (or host-side refusal). */
-  sendZecSendCancel(requestId: string, reason: string): void;
-  /** Detach listeners. The pane stays open; the SDK stops listening. */
+  /** Persist a verified outcome for an accepted request before replying. */
+  sendZecSendResult(requestId: string, txid: string): Promise<void>;
+  /** Use only when the wallet confirmed that nothing was broadcast. */
+  sendZecSendCancel(requestId: string, reason: string): Promise<void>;
+  /** Stops new callbacks and signals cancellation; broadcasts still need reconciliation. */
   close(): void;
-  /** Dropped/verified counters — useful in host diagnostics. */
   getStats(): PaneBridgeStats;
 }
 
-interface JsonParseResult {
-  ok: true;
-  value: unknown;
-}
-
-function coerceRaw(raw: unknown): { ok: true; value: unknown } | { ok: false; error: PspError } {
-  if (typeof raw === "string") {
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      const result: JsonParseResult = { ok: true, value: parsed };
-      return result;
-    } catch {
-      return { ok: false, error: new SchemaViolationError("bridge message was not valid JSON") };
-    }
-  }
-  if (typeof raw === "object" && raw !== null) {
-    return { ok: true, value: raw };
-  }
-  return { ok: false, error: new SchemaViolationError("bridge message was neither JSON text nor an object") };
-}
-
 export function attachPaneBridge(options: PaneBridgeOptions): PaneBridge {
-  const { transport, handlers, logger } = options;
+  const { transport, handlers, logger, sendStore } = options;
+  if (handlers.onZecSendRequest !== undefined && sendStore === undefined) {
+    throw new ConfigError("onZecSendRequest requires a sendStore; use durable wallet-scoped storage for live sends");
+  }
+  if (options.sessionRef !== undefined && !sessionRefSchema.safeParse(options.sessionRef).success) {
+    throw new ConfigError("malformed bridge sessionRef");
+  }
   let boundSessionRef = options.sessionRef;
   let closed = false;
-
-  const stats: PaneBridgeStats = {
-    received: 0,
-    dispatched: 0,
-    dropped: 0,
-    sessionMismatches: 0,
-    schemaViolations: 0,
-  };
-
-  const pendingReplies = new Set<string>();
-  /** Every requestId ever accepted — single-use forever, not just while in flight. */
-  const handledRequestIds = new Set<string>();
+  let unsubscribe = () => {};
+  const controller = new AbortController();
+  const handled = new Set<string>();
+  const requests = new Map<string, ZecSendRequestPayload>();
+  const replied = new Map<string, HostToPaneMessage>();
+  const stats: PaneBridgeStats = { received: 0, dispatched: 0, dropped: 0, sessionMismatches: 0, schemaViolations: 0 };
 
   function fail(error: PspError, raw: unknown): void {
     stats.dropped += 1;
     if (error.code === "SchemaViolation") stats.schemaViolations += 1;
-    logger?.warn?.("bridge message rejected", { code: error.code, reason: error.message });
+    logger?.warn?.("bridge message rejected", { code: error.code });
     handlers.onProtocolError?.(error, raw);
   }
 
-  function sendHostToPane(type: "psp/zec-send-result", payload: { requestId: string; txid: string }): void;
-  function sendHostToPane(type: "psp/zec-send-cancel", payload: { requestId: string; reason: string }): void;
-  function sendHostToPane(type: string, payload: Record<string, string>): void {
-    if (closed) {
-      logger?.debug?.("bridge closed — reply not sent");
+  function post(reply: HostToPaneMessage): void {
+    if (closed) return;
+    if (reply.type === "psp/zec-send-pending") handlers.onSendRecoveryRequired?.(reply.payload);
+    if (closed) return;
+    try { transport.post(reply); } catch {
+      fail(new PspError("NetworkUnavailable", "bridge reply delivery failed; reconcile the stored send"), undefined);
+    }
+  }
+
+  function pending(sessionRef: string, requestId: string, reason: ZecSendPendingPayload["reason"]): HostToPaneMessage {
+    return { v: 1, type: "psp/zec-send-pending", sessionRef, payload: { requestId, reason } };
+  }
+
+  async function complete(request: ZecSendRequestPayload, reply: HostToPaneMessage): Promise<void> {
+    const parsed = parseHostToPaneMessage(reply);
+    if (!parsed.ok) throw parsed.error;
+    const previous = replied.get(request.requestId);
+    if (previous !== undefined && previous.type !== "psp/zec-send-pending") {
+      if (JSON.stringify(previous) === JSON.stringify(parsed.value)) return;
+      throw new SchemaViolationError("a terminal send outcome is already recorded");
+    }
+    if (sendStore === undefined) throw new ConfigError("cannot record a send without a sendStore");
+    try {
+      await sendStore.complete(reply.sessionRef, request, parsed.value);
+    } catch {
+      const recorded = replied.get(request.requestId);
+      if (recorded !== undefined && recorded.type !== "psp/zec-send-pending") {
+        throw new ConfigError("a terminal send outcome is already recorded");
+      }
+      const txids = reply.type === "psp/zec-send-result" ? reply.payload.txids ?? [reply.payload.txid]
+        : reply.type === "psp/zec-send-pending" ? reply.payload.txids : undefined;
+      post({ v: 1, type: "psp/zec-send-pending", sessionRef: reply.sessionRef, payload: { requestId: request.requestId, reason: "storage-unavailable", ...(txids ? { txids } : {}) } });
+      throw new ConfigError("send outcome could not be persisted; reconcile before retrying");
+    }
+    replied.set(request.requestId, parsed.value);
+    post(parsed.value);
+  }
+
+  async function handleSend(sessionRef: string, request: ZecSendRequestPayload): Promise<void> {
+    if (closed) return;
+    if (sendStore === undefined) {
+      post(pending(sessionRef, request.requestId, "storage-unavailable"));
       return;
     }
-    if (boundSessionRef === undefined) {
-      logger?.warn?.("cannot reply before binding (no psp/ready yet)");
+    try {
+      const previous = await sendStore.claim(sessionRef, request);
+      if (previous !== undefined) {
+        const stored = readSendRecord(JSON.stringify(previous), sessionRef, request);
+        if (stored.reply !== undefined) replied.set(request.requestId, stored.reply);
+        post(stored.reply ?? pending(sessionRef, request.requestId, "in-progress"));
+        return;
+      }
+    } catch (error) {
+      if (error instanceof SchemaViolationError) fail(error, undefined);
+      post(pending(sessionRef, request.requestId, "storage-unavailable"));
       return;
     }
-    const envelope = { v: 1, type, sessionRef: boundSessionRef, payload };
-    const parsed = parseHostToPaneMessage(envelope);
-    if (!parsed.ok) {
-      fail(parsed.error, envelope);
+    if (closed || handlers.onZecSendRequest === undefined) {
+      await complete(request, { v: 1, type: "psp/zec-send-cancel", sessionRef, payload: { requestId: request.requestId, reason: "wallet confirmation not started" } });
       return;
     }
-    transport.post(parsed.value);
+    let reply: HostToPaneMessage;
+    try {
+      const outcome = await handlers.onZecSendRequest(request, { signal: controller.signal });
+      reply = sendReply(sessionRef, request.requestId, outcome);
+    } catch {
+      reply = pending(sessionRef, request.requestId, "broadcast-unknown");
+    }
+    await complete(request, reply);
   }
 
   function dispatch(message: PaneToHostMessage): void {
-    if (boundSessionRef !== undefined && message.sessionRef !== boundSessionRef) {
+    if ((boundSessionRef !== undefined && message.sessionRef !== boundSessionRef)
+      || (boundSessionRef === undefined && message.type !== "psp/ready")
+      || (message.type === "psp/ready" && message.payload.sessionRef !== message.sessionRef)) {
       stats.sessionMismatches += 1;
-      fail(new PspError("SessionMismatch", "bridge message sessionRef does not match the bound session"), message);
-      return;
-    }
-    if (boundSessionRef === undefined && message.type !== "psp/ready") {
-      fail(
-        new PspError("SessionMismatch", "bridge not bound yet — the first accepted message must be psp/ready"),
-        message,
-      );
+      fail(new PspError("SessionMismatch", "bridge session binding mismatch"), undefined);
       return;
     }
     if (boundSessionRef === undefined) {
       boundSessionRef = message.sessionRef;
       logger?.debug?.("bridge bound to session", { sessionRef: redactSessionRef(boundSessionRef) });
     }
-
     switch (message.type) {
-      case "psp/ready": {
-        if (message.payload.sessionRef !== message.sessionRef) {
-          stats.sessionMismatches += 1;
-          fail(new PspError("SessionMismatch", "psp/ready payload sessionRef mismatch"), message);
-          return;
-        }
+      case "psp/ready":
         stats.dispatched += 1;
         handlers.onReady?.(message.payload);
         return;
-      }
-      case "psp/zec-send-request": {
-        if (pendingReplies.has(message.payload.requestId) || handledRequestIds.has(message.payload.requestId)) {
-          fail(new SchemaViolationError("replayed requestId"), message);
+      case "psp/zec-send-request":
+        if (handled.has(message.payload.requestId)) {
+          fail(new SchemaViolationError("replayed requestId"), undefined);
           return;
         }
-        pendingReplies.add(message.payload.requestId);
-        handledRequestIds.add(message.payload.requestId);
+        handled.add(message.payload.requestId);
+        requests.set(message.payload.requestId, message.payload);
         stats.dispatched += 1;
-        const requestId = message.payload.requestId;
-        const address = message.payload.address;
-        const amountZat = message.payload.amountZat;
-        void Promise.resolve()
-          .then(() => handlers.onZecSendRequest?.({ requestId, address, amountZat, ...(message.payload.memo !== undefined ? { memo: message.payload.memo } : {}) }))
-          .then((outcome) => {
-            if (outcome === undefined) {
-              sendZecSendCancel(requestId, "no handler attached");
-              return;
-            }
-            if ("cancel" in outcome) {
-              sendZecSendCancel(requestId, outcome.reason ?? "user declined");
-              return;
-            }
-            sendZecSendResult(requestId, outcome.txid);
-          })
-          .catch((cause: unknown) => {
-            logger?.error?.("onZecSendRequest handler failed", {
-              requestId,
-              cause: cause instanceof Error ? cause.name : "unknown",
-            });
-            sendZecSendCancel(requestId, "wallet error");
-          })
-          .finally(() => {
-            pendingReplies.delete(requestId);
-          });
+        void Promise.resolve().then(() => handleSend(message.sessionRef, message.payload)).catch(() => {
+          fail(new PspError("ConfigError", "host callback failed"), undefined);
+        });
         return;
-      }
-      case "psp/result": {
+      case "psp/result":
         stats.dispatched += 1;
         handlers.onResult?.(message.payload);
         return;
-      }
-      case "psp/close": {
+      case "psp/close":
         stats.dispatched += 1;
+        close();
         handlers.onClose?.(message.payload);
+        return;
+    }
+  }
+
+  async function manualReply(requestId: string, outcome: ZecSendOutcome): Promise<void> {
+    const request = requests.get(requestId);
+    if (boundSessionRef === undefined || request === undefined) throw new ConfigError("cannot reply to an unknown send request");
+    await complete(request, sendReply(boundSessionRef, requestId, outcome));
+  }
+
+  const detach = transport.subscribe((raw) => {
+    if (closed) return;
+    stats.received += 1;
+    let value: unknown = raw;
+    if (typeof value === "string") {
+      try { value = JSON.parse(value); } catch {
+        fail(new SchemaViolationError("bridge message was not valid JSON"), undefined);
         return;
       }
     }
-  }
-
-  function sendZecSendResult(requestId: string, txid: string): void {
-    sendHostToPane("psp/zec-send-result", { requestId, txid });
-  }
-
-  function sendZecSendCancel(requestId: string, reason: string): void {
-    sendHostToPane("psp/zec-send-cancel", { requestId, reason });
-  }
-
-  const unsubscribe = transport.subscribe((raw) => {
-    if (closed) return;
-    stats.received += 1;
-
-    const coerced = coerceRaw(raw);
-    if (!coerced.ok) {
-      fail(coerced.error, raw);
-      return;
-    }
-    if (hasUnknownEnvelopeVersion(coerced.value)) {
-      // Unknown version → refuse the whole session (fail closed, no degrade).
-      const error = new UnsupportedProtocolVersionError();
-      stats.dropped += 1;
-      logger?.error?.("unsupported PSP envelope version — refusing session");
-      handlers.onProtocolError?.(error, coerced.value);
+    if (hasUnknownEnvelopeVersion(value)) {
       close();
+      fail(new UnsupportedProtocolVersionError(), undefined);
       return;
     }
-    const parsed = parsePaneToHostMessage(coerced.value);
-    if (!parsed.ok) {
-      fail(parsed.error, coerced.value);
-      return;
-    }
+    const parsed = parsePaneToHostMessage(value);
+    if (!parsed.ok) { fail(parsed.error, undefined); return; }
     dispatch(parsed.value);
   });
+  unsubscribe = detach;
+  if (closed) unsubscribe();
 
   function close(): void {
     if (closed) return;
     closed = true;
+    controller.abort();
     unsubscribe();
   }
 
   return {
-    sendZecSendResult,
-    sendZecSendCancel,
+    sendZecSendResult: (requestId, txid) => manualReply(requestId, { txid }),
+    sendZecSendCancel: (requestId, reason) => manualReply(requestId, { cancel: true, reason }),
     close,
     getStats: () => ({ ...stats }),
   };

@@ -42,6 +42,7 @@ export const PSP_MESSAGE_TYPES = [
   "psp/zec-send-request",
   "psp/zec-send-result",
   "psp/zec-send-cancel",
+  "psp/zec-send-pending",
   "psp/result",
   "psp/close",
 ] as const;
@@ -59,6 +60,7 @@ export const PANE_TO_HOST_TYPES: readonly PspMessageType[] = [
 export const HOST_TO_PANE_TYPES: readonly PspMessageType[] = [
   "psp/zec-send-result",
   "psp/zec-send-cancel",
+  "psp/zec-send-pending",
 ];
 
 // ---------------------------------------------------------------------------
@@ -73,7 +75,8 @@ export type PaneToHostMessage =
 
 export type HostToPaneMessage =
   | PspEnvelope<"psp/zec-send-result", ZecSendResultPayload>
-  | PspEnvelope<"psp/zec-send-cancel", ZecSendCancelPayload>;
+  | PspEnvelope<"psp/zec-send-cancel", ZecSendCancelPayload>
+  | PspEnvelope<"psp/zec-send-pending", ZecSendPendingPayload>;
 
 /** Wire envelope. `payload` is typed per message. */
 export interface PspEnvelope<T extends PspMessageType = PspMessageType, P = unknown> {
@@ -129,13 +132,23 @@ export interface ClosePayload {
 /** `psp/zec-send-result` — reply to a send request after wallet confirm + broadcast. */
 export interface ZecSendResultPayload {
   requestId: string;
+  /** Transaction containing the requested deposit, identified by the wallet. */
   txid: string;
+  /** All transactions produced by the send, including `txid`. */
+  txids?: string[];
 }
 
 /** `psp/zec-send-cancel` — user declined in the native confirm sheet. */
 export interface ZecSendCancelPayload {
   requestId: string;
   reason: string;
+}
+
+/** A send needs reconciliation; the pane must not request another deposit. */
+export interface ZecSendPendingPayload {
+  requestId: string;
+  reason: "in-progress" | "broadcast-unknown" | "multiple-transactions" | "storage-unavailable";
+  txids?: string[];
 }
 
 // ---------------------------------------------------------------------------

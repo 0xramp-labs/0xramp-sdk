@@ -50,7 +50,7 @@
       var PSP_VERSION = 1;
       var params = new URLSearchParams(location.search);
       var sessionRef = params.get("sessionRef") || "sessSANDBOX00000001";
-      var requestCounter = 0;
+      var activeRequestId = null;
 
       document.getElementById("session").textContent = "sessionRef: " + sessionRef;
       var logEl = document.getElementById("log");
@@ -65,39 +65,59 @@
       function post(type, payload) {
         var envelope = { v: PSP_VERSION, type: type, sessionRef: sessionRef, payload: payload };
         log("out", "→ " + JSON.stringify(envelope));
-        // DOM/browser hosts: window.parent.postMessage. Electron/RN hosts
-        // receive this via their injected channel (see examples/).
-        window.parent.postMessage(envelope, "*");
+        if (window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === "function") {
+          window.ReactNativeWebView.postMessage(JSON.stringify(envelope));
+        } else {
+          window.parent.postMessage(envelope, "*");
+        }
       }
 
       function validateEnvelope(raw) {
         if (typeof raw !== "object" || raw === null) return "not an object";
         if (raw.v !== PSP_VERSION) return "unsupported version";
         if (raw.sessionRef !== sessionRef) return "sessionRef mismatch";
-        if (raw.type !== "psp/zec-send-result" && raw.type !== "psp/zec-send-cancel") return "unexpected type for pane";
+        if (["psp/zec-send-result", "psp/zec-send-cancel", "psp/zec-send-pending"].indexOf(raw.type) === -1) return "unexpected type for pane";
         if (typeof raw.payload !== "object" || raw.payload === null) return "payload missing";
-        if (typeof raw.payload.requestId !== "string") return "requestId missing";
-        if (raw.type === "psp/zec-send-result" && typeof raw.payload.txid !== "string") return "txid missing";
+        if (raw.payload.requestId !== activeRequestId) return "requestId mismatch";
+        if (raw.type === "psp/zec-send-result" && !/^[0-9a-fA-F]{64}$/.test(raw.payload.txid || "")) return "txid invalid";
+        if (raw.payload.txids !== undefined && (!Array.isArray(raw.payload.txids) || raw.payload.txids.length < 1 || raw.payload.txids.length > 32 || !raw.payload.txids.every(function (id) { return typeof id === "string" && /^[0-9a-fA-F]{64}$/.test(id); }))) return "txids invalid";
+        if (raw.type === "psp/zec-send-result" && raw.payload.txids && raw.payload.txids.indexOf(raw.payload.txid) === -1) return "deposit txid missing";
+        if (raw.type === "psp/zec-send-pending" && ["in-progress", "broadcast-unknown", "multiple-transactions", "storage-unavailable"].indexOf(raw.payload.reason) === -1) return "pending reason invalid";
+        if (raw.type === "psp/zec-send-cancel" && typeof raw.payload.reason !== "string") return "cancel reason missing";
         return null;
       }
 
-      window.addEventListener("message", function (event) {
-        var problem = validateEnvelope(event.data);
+      function receive(event) {
+        // Native iOS and Android dispatch on different targets; process each event once.
+        if (event.pspHandled) return;
+        event.pspHandled = true;
+        if (event.source && event.source !== window.parent) return;
+        var raw = event.data;
+        if (typeof raw === "string") {
+          try { raw = JSON.parse(raw); } catch { log("err", "dropped invalid JSON"); return; }
+        }
+        var problem = validateEnvelope(raw);
         if (problem) {
           log("err", "✕ dropped inbound message: " + problem);
           return;
         }
-        log("in", "← " + JSON.stringify(event.data));
-      });
+        log("in", "← " + JSON.stringify(raw));
+        if (raw.type === "psp/zec-send-pending") log("in", "Reconcile status and wallet history. Do not send again.");
+        document.getElementById("btn-send").disabled = true;
+      }
+      window.addEventListener("message", receive);
+      document.addEventListener("message", receive);
 
       document.getElementById("btn-ready").addEventListener("click", function () {
         post("psp/ready", { sessionRef: sessionRef, resolvedParams: { sandbox: true, direction: "sell", fiat: "BRL", asset: "ZEC" } });
       });
 
       document.getElementById("btn-send").addEventListener("click", function () {
-        requestCounter += 1;
+        if (activeRequestId !== null) return;
+        activeRequestId = "reqSANDBOX00000001";
+        document.getElementById("btn-send").disabled = true;
         post("psp/zec-send-request", {
-          requestId: "reqSANDBOX" + String(requestCounter).padStart(8, "0"),
+          requestId: activeRequestId,
           address: "t1FakeAddrForFixtures9zqqqqqqqqqqqqq",
           amountZat: "5000000",
         });
@@ -112,6 +132,7 @@
       });
 
       document.getElementById("btn-close").addEventListener("click", function () {
+        document.getElementById("btn-send").disabled = true;
         post("psp/close", { reason: "user finished" });
       });
 

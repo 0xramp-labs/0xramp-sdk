@@ -1,0 +1,17 @@
+{
+  "kind": "bridge.host-to-pane",
+  "name": "Wallet identifies the deposit among multiple synthetic transactions",
+  "data": {
+    "v": 1,
+    "type": "psp/zec-send-result",
+    "sessionRef": "sessGOLDEN00000001",
+    "payload": {
+      "requestId": "reqGOLDEN00000001",
+      "txid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "txids": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ]
+    }
+  }
+}

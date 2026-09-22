@@ -1,0 +1,13 @@
+{
+  "kind": "bridge.host-to-pane",
+  "name": "Send requires reconciliation after an uncertain broadcast",
+  "data": {
+    "v": 1,
+    "type": "psp/zec-send-pending",
+    "sessionRef": "sessGOLDEN00000001",
+    "payload": {
+      "requestId": "reqGOLDEN00000001",
+      "reason": "broadcast-unknown"
+    }
+  }
+}

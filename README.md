@@ -35,47 +35,74 @@ Details: [`docs/DESIGN.md`](docs/DESIGN.md) · full surface: [`docs/SPEC.md`](do
 ```bash
 git clone https://github.com/0xramp-labs/0xramp-sdk.git
 cd 0xramp-sdk
-npm ci && npm run build   # tsc → dist/ (ESM + .d.ts)
+npm ci --ignore-scripts && npm run build   # tsc → dist/ (ESM + .d.ts)
 ```
 
 Then link the repo from your app: `"@0xramp/sdk": "file:<path-to-repo>"` in `package.json` (the [React Native example](examples/react-native-host/) links the repo root directly) or `npm link`.
 
 Pure ESM, strictly typed, React-free. Targets React Native, Electron, and browsers. Zero runtime dependencies besides schema validation.
 
-## Quickstart (the five functions)
+## Quickstart
 
 ```ts
-import { createRampClient } from "@0xramp/sdk";
+import { createRampClient, createZecSendStore } from "@0xramp/sdk";
+
+// One durable, secure storage namespace per unlocked wallet.
+const sendStore = createZecSendStore({
+  get: key => secureWalletStorage.get(key),
+  set: (key, value) => secureWalletStorage.set(key, value),
+});
 
 const ramp = createRampClient({
   environment: "production",
   partnerId: "<issued-by-0xramp>", // onboarding via 0xramp
+  sendStore,
 });
 
 // 1 — open a session
-const { sessionUrl } = await ramp.createSession({
+await secureSessionStorage.saveCreationIntent(partnerSessionId);
+const session = await ramp.createSession({
   direction: "sell", asset: "ZEC", fiat: "BRL",
+  partnerSessionId, // correlation, not a guarantee of server idempotency
 });
+await secureSessionStorage.save(session);
 
-// 2 — host the pane: load sessionUrl in your WebView, navigation locked to 0xramp origins
-
-// 3 — wire the bridge; the pane drives, you handle
-ramp.attachPaneBridge({
+// 2 — attach before loading the pane; explicitly bind each new session
+const bridge = ramp.attachPaneBridge({
+  sessionRef: session.sessionRef,
   transport: myTransport, // postMessage/IPC adapter — see examples/
-  onZecSendRequest: async ({ address, amountZat }) => {
-    const txid = await myWallet.sendToTransparent(address, amountZat);
-    return { txid };
-  },
-  onResult: saveReceipt,
+  onZecSendRequest: (request, { signal }) =>
+    myWallet.confirmAndSend(request, { signal }),
+  onSendRecoveryRequired: showRecoveryScreen,
+  onResult: () => { void refreshAuthoritativeStatus(); },
   onClose: teardownPane,
 });
 
-// 4 — authoritative status (read-only, ticketed)
-await ramp.getStatus(sessionRef);
+// 3 — use this policy for the initial source AND every navigation
+if (!ramp.isAllowedPaneUrl(session.sessionUrl)) throw new Error("origin refused");
+loadWebView(session.sessionUrl);
 
-// 5 — parse a return deep-link (advisory only)
-ramp.parseReturnUrl("zingo://ramp?...");
+// 4 — authoritative status; never turn advisory bridge data into a receipt
+const status = await ramp.getStatus(session.sessionRef);
+
+// 5 — close detaches listeners and aborts pending confirmation, not broadcasts
+bridge.close();
+
+// App restart: restore the secure session, check status, attach a fresh bridge.
+ramp.restoreSession(await secureSessionStorage.load());
 ```
+
+`myWallet`, storage and UI methods above are partner-owned ports. An approved
+send returns `{ txid }`; use `{ cancel: true, reason }` only when no broadcast
+occurred. Errors, ambiguous multiple transaction IDs and interrupted sends stay
+pending for reconciliation. Never retry a send or session-creation POST blindly.
+
+The [partner guide](docs/partner-guide.md) explains exact origins, native
+transport, durable recovery and multiple transaction IDs. The
+[readiness checklist](docs/partner-readiness.md) separates simulated coverage
+from live API/device/settlement evidence. **QR-PAY is outside this SDK's v0
+scope.** The RN example's live wallet adapter is deliberately disabled; the
+Electron example is local sandbox only.
 
 ## What the SDK never does
 
@@ -94,9 +121,10 @@ Signs or moves funds · holds keys or custody · stores or transits payout keys 
 ## Development
 
 ```bash
-npm ci          # pinned dependencies
+npm ci --ignore-scripts # pinned dependencies, no lifecycle scripts
 npm run build   # tsc → dist/ (ESM + .d.ts)
 npm test        # vitest (includes golden-fixture parity)
+npm run test:partner # opt-in simulated host lifecycle; no Expo/Electron installation
 npm run audit   # npm audit --omit=dev
 ```
 
