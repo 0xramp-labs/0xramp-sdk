@@ -4,6 +4,51 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [semver](https://semver.org/).
 
+## [0.0.2] — 2026-09-22 (partner integration hardening)
+
+### Fixed
+
+- Queued wallet callbacks no longer start after bridge closure; close messages
+  detach listeners before host callbacks. In-flight confirmation receives an
+  abort signal and late broadcast outcomes are persisted for recovery.
+- Ready payloads cannot bind a different envelope session. Custom deployments
+  no longer trust sibling tenants derived from a shared parent hostname.
+- The sandbox uses the React Native JSON bridge and receives string replies
+  on both native event targets, while retaining browser object transport.
+- RN host lifecycle now attaches each session before load, restores securely
+  saved tickets, checks authoritative status and blocks uncertain creation or
+  expiry. Live failures never become sandbox success; the unimplemented live
+  wallet adapter explicitly refuses sends.
+- Electron's local-only demo uses the real SDK with validated IPC senders,
+  exact fixture navigation and cleanup. Live iframe/PANE_URL claims and raw
+  envelope logging were removed.
+
+### Added
+
+- `createZecSendStore`, `createMemoryZecSendStore` (sandbox only), and journal
+  interfaces. Durable claims precede signing; verified outcomes precede replies.
+  Stored outcomes survive bridge recreation; unresolved claims never auto-resend.
+- Additive PSP-v1 `psp/zec-send-pending` plus optional result `txids`, schemas
+  and golden fixtures. Wallet adapters can preserve multiple transaction IDs
+  without guessing which one paid the deposit. Deployed panes must adopt the
+  fixtures before a live pilot; protocol changes require CODEOWNERS review.
+- `restoreSession`, `isAllowedPaneUrl`, exact `paneOrigins`, configurable
+  network deadlines covering response bodies and refusal of API redirects.
+- Regression tests, opt-in `test:partner` host simulation, and explicit
+  partner-readiness gates for API, native device and real settlement tests.
+
+### Migration (host API changes in this v0 release)
+
+- Supply a persistent wallet-scoped `sendStore` with `onZecSendRequest`.
+  Cross-process storage requires atomic claims; memory is not live replay protection.
+- Wallet handler throws/invalid output now mean pending reconciliation rather
+  than cancellation. Return cancel only after proving no broadcast occurred.
+- `sendZecSendResult` and `sendZecSendCancel` now return promises; await them
+  and handle persistence failures. `onSendRecoveryRequired` surfaces pending work.
+- Configure exact pane origins when using a separate API host. Validate
+  native fetch redirect behavior. Never automatically retry creation POSTs.
+- This release is for development/pilot review, not a production certification.
+
 ## [0.0.1] — 2026-09-21 (scaffold)
 
 ### Added
@@ -81,3 +126,4 @@ All notable changes to this project are documented here. Format based on
 - "Powered by 0xramp · P2P.me" attribution is required in integrations.
 
 [0.0.1]: https://github.com/0xramp-labs/0xramp-sdk/releases/tag/v0.0.1
+[0.0.2]: https://github.com/0xramp-labs/0xramp-sdk/compare/v0.0.1...v0.0.2
