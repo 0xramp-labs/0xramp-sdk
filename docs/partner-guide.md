@@ -1,5 +1,15 @@
 # Partner guide — hosting the 0xramp pane
 
+For an API deployment that explicitly supports idempotent creation, generate
+32 cryptographically random bytes, encode them as base64url and securely persist
+that `idempotencyKey` together with the complete `createSession` input **before**
+sending. The SDK carries it in `Idempotency-Key`; it never retries automatically.
+An explicit recovery must reuse the identical key and body; changing the input
+must fail with 409. `partnerSessionId` is public correlation data and cannot
+recover credentials. Do not assume that sending a header adds this guarantee to
+an older server. The native example remains conservative and requires manual
+reconciliation after a lost create response.
+
 Use the SDK for a **SELL ZEC → fiat host-mode pilot** first. The SDK opens a
 hosted session, connects a wallet callback and reads status. It does not
 implement a fiat provider, a wallet signer or QR-PAY. BUY currently requires

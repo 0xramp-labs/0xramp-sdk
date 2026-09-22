@@ -95,6 +95,10 @@ export interface RampClientConfig {
 }
 
 export interface CreateSessionInput {
+  /** Persist a cryptographically random key before create; reuse it with the
+   * identical input for explicit recovery on an idempotency-enabled API.
+   * Public partnerSessionId is correlation only, never a recovery credential. */
+  idempotencyKey?: string;
   direction: SessionDirection;
   asset: RampAsset;
   /** ISO 4217 code of a corridor 0xramp serves (server-authoritative). */
@@ -217,7 +221,7 @@ export function createRampClient(config: RampClientConfig): RampClient {
 
   async function request<T>(
     path: string,
-    init: RequestInit & { authTicket?: string },
+    init: RequestInit & { authTicket?: string; idempotencyKey?: string },
     parse: (body: unknown) => { ok: true; value: T } | { ok: false; error: PspError },
   ): Promise<T> {
     const headers: Record<string, string> = {
@@ -229,6 +233,7 @@ export function createRampClient(config: RampClientConfig): RampClient {
     if (init.authTicket !== undefined) {
       headers["authorization"] = `PartnerTicket v1.${init.authTicket}`;
     }
+    if (init.idempotencyKey !== undefined) headers["idempotency-key"] = init.idempotencyKey;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<never>((_resolve, reject) => {
@@ -258,6 +263,9 @@ export function createRampClient(config: RampClientConfig): RampClient {
 
   return {
     async createSession(input: CreateSessionInput): Promise<RampSession> {
+      if (input.idempotencyKey !== undefined && (typeof input.idempotencyKey !== "string" || !/^[A-Za-z0-9_-]{32,128}$/.test(input.idempotencyKey))) {
+        throw new ConfigError("idempotencyKey must be 32–128 characters of [A-Za-z0-9_-]");
+      }
       const body: CreateSessionRequestBody = {
         partnerId: config.partnerId,
         direction: input.direction,
@@ -275,7 +283,7 @@ export function createRampClient(config: RampClientConfig): RampClient {
       }
       const res = await request<CreateSessionResponseBody>(
         PARTNER_SESSIONS_PATH,
-        { method: "POST", body: JSON.stringify(checked.value) },
+        { method: "POST", body: JSON.stringify(checked.value), idempotencyKey: input.idempotencyKey },
         parseCreateSessionResponse,
       );
       rememberSession(res);

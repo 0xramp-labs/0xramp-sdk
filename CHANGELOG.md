@@ -25,6 +25,9 @@ All notable changes to this project are documented here. Format based on
 
 ### Added
 
+- Optional `createSession` `idempotencyKey` carried only in the HTTP header for
+  explicit recovery on deployments that support idempotent creation. The SDK
+  never retries automatically; persist the random key and identical input first.
 - `createZecSendStore`, `createMemoryZecSendStore` (sandbox only), and journal
   interfaces. Durable claims precede signing; verified outcomes precede replies.
   Stored outcomes survive bridge recreation; unresolved claims never auto-resend.

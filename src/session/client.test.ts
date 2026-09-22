@@ -36,6 +36,19 @@ afterEach(() => {
 });
 
 describe("createRampClient", () => {
+  it("carries an optional recovery key only in the header and never retries automatically", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(201, SESSION_RESPONSE));
+    const client = createRampClient(makeConfig(fetchMock));
+    const input = { direction: "sell" as const, asset: "ZEC" as const, fiat: "BRL", idempotencyKey: "a".repeat(43) };
+    await client.createSession(input);
+    expect(fetchMock.mock.calls[0]![1].headers["idempotency-key"]).toBe(input.idempotencyKey);
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).not.toHaveProperty("idempotencyKey");
+    fetchMock.mockRejectedValueOnce(new Error("response lost"));
+    await expect(client.createSession(input)).rejects.toThrow("could not reach");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await expect(client.createSession({ ...input, idempotencyKey: "guessable" })).rejects.toThrow("idempotencyKey");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
   it("locks a custom deployment to the exact origin, including its port", () => {
     const client = createRampClient(makeConfig(vi.fn(), { environment: "staging", apiBaseUrl: "https://partner.hosting.example" }));
     expect(client.isAllowedPaneUrl("https://partner.hosting.example/session")).toBe(true);
