@@ -1,161 +1,147 @@
-/**
- * Minimal React Native host for the 0xramp SDK (PSP-v1).
- *
- * Demonstrates the full host integration:
- * - createSession → load the returned sessionUrl (sandbox pane fallback);
- * - WebView pane with navigation locked to 0xramp origins;
- * - a PaneTransport adapter over WebView postMessage;
- * - onZecSendRequest → your wallet core signs (stubbed here);
- * - advisory result handling + attribution.
- *
- * With EXPO_PUBLIC_PARTNER_ID set, "Start ramp" calls createSession and
- * loads the returned URL (asserted against the origin allowlist first — on
- * iOS the initial `source` load bypasses onShouldStartLoadWithRequest).
- * Without it, the sandbox pane is used so the bridge flow is testable with
- * zero 0xramp access.
- */
-import { useMemo, useRef, useState } from "react";
-import { SafeAreaView, StatusBar, Text, TouchableOpacity, View } from "react-native";
-import { WebView, type WebViewMessageEvent, type WebViewNavigation } from "react-native-webview";
+import { useEffect, useRef, useState } from "react";
+import { Alert, AppState, Button, Linking, SafeAreaView, Text, View } from "react-native";
+import * as SecureStore from "expo-secure-store";
+import { WebView } from "react-native-webview";
+import { attachPaneBridge, createMemoryZecSendStore, createRampClient, createZecSendStore, type PaneBridge, type PaneBridgeHandlers, type PaneTransport } from "@0xramp/sdk";
+import { createPartnerHost, type HostState } from "./host";
 
-import {
-  ALLOWED_PANE_HOST_SUFFIXES,
-  assertAllowedPaneNavigation,
-  attachPaneBridge,
-  createRampClient,
-  isAllowedPaneNavigation,
-  type PaneBridge,
-  type PaneTransport,
-  type RampClient,
-} from "@0xramp/sdk";
-
-const SANDBOX_PANE_URL = "http://localhost:8081/sandbox-pane.html"; // serve sandbox/ via any static server
 const PARTNER_ID = process.env.EXPO_PUBLIC_PARTNER_ID ?? "";
+const SANDBOX = PARTNER_ID === "";
+// Port 8082 avoids Expo Metro's default port. Android emulator: use 10.0.2.2.
+const SANDBOX_URL = process.env.EXPO_PUBLIC_SANDBOX_URL ?? "http://localhost:8082/sandbox-pane.html";
+// One demonstration wallet. Real hosts MUST scope both stores to the unlocked wallet.
+const STORAGE_SCOPE = "ramp.example.wallet";
+const secureStorage = {
+  get: (key: string) => SecureStore.getItemAsync(`${STORAGE_SCOPE}.${key}`),
+  set: (key: string, value: string) => SecureStore.setItemAsync(`${STORAGE_SCOPE}.${key}`, value),
+};
+const liveStore = createZecSendStore(secureStorage);
+const demoStore = createMemoryZecSendStore();
+
+// Deliberately fails closed. Replace with the partner's native confirmation +
+// wallet adapter only after completing docs/partner-readiness.md.
+const liveWallet: NonNullable<PaneBridgeHandlers["onZecSendRequest"]> = async () => ({ cancel: true, reason: "wallet adapter not configured" });
+
+function confirmSimulation(signal: AbortSignal): Promise<boolean> {
+  return new Promise(resolve => {
+    if (signal.aborted) { resolve(false); return; }
+    const finish = (approved: boolean) => { signal.removeEventListener("abort", abort); resolve(approved && !signal.aborted); };
+    const abort = () => finish(false);
+    signal.addEventListener("abort", abort, { once: true });
+    Alert.alert("Simulate a ZEC send", "Sandbox only. No funds move.", [
+      { text: "Cancel", style: "cancel", onPress: () => finish(false) },
+      { text: "Simulate", onPress: () => finish(true) },
+    ], { cancelable: true, onDismiss: () => finish(false) });
+  });
+}
 
 export default function App(): JSX.Element {
   const webRef = useRef<WebView>(null);
-  const bridgeRef = useRef<PaneBridge | null>(null);
-  const listenerRef = useRef<((raw: unknown) => void) | undefined>(undefined);
-  const [status, setStatus] = useState("idle");
-  const [lastResult, setLastResult] = useState<string>("");
-  const [paneUrl, setPaneUrl] = useState<string>(SANDBOX_PANE_URL);
+  const listener = useRef<((raw: unknown) => void) | undefined>(undefined);
+  const host = useRef<ReturnType<typeof createPartnerHost> | undefined>(undefined);
+  const demoBridge = useRef<PaneBridge | undefined>(undefined);
+  const epoch = useRef(0);
+  const [state, setState] = useState<HostState>({ message: "Initializing", active: false, blocked: !SANDBOX, pane: null });
+  const [configurationError, setConfigurationError] = useState(false);
+  const client = useRef<ReturnType<typeof createRampClient> | undefined>(undefined);
+  const transport = useRef<PaneTransport>({
+    post: message => {
+      if (!webRef.current) throw new Error("pane detached");
+      webRef.current.postMessage(JSON.stringify(message));
+    },
+    subscribe: handler => { listener.current = handler; return () => { if (listener.current === handler) listener.current = undefined; }; },
+  }).current;
 
-  const ramp: RampClient | null = useMemo(
-    () => (PARTNER_ID === "" ? null : createRampClient({ environment: "production", partnerId: PARTNER_ID })),
-    [],
-  );
+  useEffect(() => {
+    if (SANDBOX) {
+      try {
+        const url = new URL(SANDBOX_URL);
+        if (url.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]", "10.0.2.2"].includes(url.hostname) || url.pathname !== "/sandbox-pane.html" || url.username || url.password) throw new Error("local sandbox required");
+        setState(current => ({ ...current, message: "Sandbox ready" }));
+      } catch { setConfigurationError(true); }
+      return () => demoBridge.current?.close();
+    }
+    let mounted = true;
+    try {
+      const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL;
+      const paneOrigin = process.env.EXPO_PUBLIC_PANE_ORIGIN;
+      client.current = createRampClient({
+        environment: apiBaseUrl ? "staging" : "production", partnerId: PARTNER_ID,
+        ...(apiBaseUrl ? { apiBaseUrl } : {}), ...(paneOrigin ? { paneOrigins: [paneOrigin] } : {}), sendStore: liveStore,
+      });
+      const activeKey = `${STORAGE_SCOPE}.active-session`;
+      const current = createPartnerHost({ client: client.current, transport, wallet: liveWallet,
+        storage: { read: () => SecureStore.getItemAsync(activeKey), write: value => value === null ? SecureStore.deleteItemAsync(activeKey) : SecureStore.setItemAsync(activeKey, value) },
+        onState: value => { if (mounted) setState(value); },
+      });
+      host.current = current;
+      void current.initialize().then(async () => {
+        const url = await Linking.getInitialURL();
+        if (mounted && url) current.handleReturn(url);
+        if (mounted) await current.refreshStatus();
+      }).catch(() => { if (mounted) setConfigurationError(true); });
+      const foreground = AppState.addEventListener("change", value => { if (value === "active") void current.refreshStatus(); });
+      const links = Linking.addEventListener("url", event => current.handleReturn(event.url));
+      return () => { mounted = false; foreground.remove(); links.remove(); current.dispose(); host.current = undefined; };
+    } catch { setConfigurationError(true); return () => { mounted = false; }; }
+  }, [transport]);
 
-  const transport: PaneTransport = useMemo(
-    () => ({
-      post: (message) => {
-        webRef.current?.postMessage(JSON.stringify(message));
-      },
-      subscribe: (handler) => {
-        listenerRef.current = handler;
-        return () => {
-          listenerRef.current = undefined;
-        };
-      },
-    }),
-    [],
-  );
-
-  const startSession = async () => {
-    if (ramp === null) {
-      setStatus("no EXPO_PUBLIC_PARTNER_ID — using the sandbox pane");
+  function closePane() {
+    demoBridge.current?.close(); demoBridge.current = undefined;
+    if (SANDBOX) setState(current => ({ ...current, active: false, pane: null, message: "Sandbox closed" }));
+    else host.current?.close();
+  }
+  function start() {
+    if (!SANDBOX) {
+      void host.current?.start({ direction: "sell", asset: "ZEC", fiat: "BRL", returnUrl: "ramp-example://ramp", partnerSessionId: `example-${Date.now()}-${++epoch.current}` });
       return;
     }
-    try {
-      setStatus("creating session…");
-      const session = await ramp.createSession({
-        direction: "sell",
-        asset: "ZEC",
-        fiat: "BRL",
-        returnUrl: "zingo://ramp",
-      });
-      // iOS: the initial `source` load never reaches onShouldStartLoadWithRequest,
-      // so the session URL must be validated before it is handed to the WebView.
-      assertAllowedPaneNavigation(session.sessionUrl);
-      setPaneUrl(session.sessionUrl);
-      setStatus(`session created (${session.sessionRef.length}-char ref) — pane loading`);
-    } catch (error) {
-      setStatus(`createSession failed: ${error instanceof Error ? error.message : "unknown"} — sandbox fallback`);
-      setPaneUrl(SANDBOX_PANE_URL);
-    }
-  };
-
-  const attach = () => {
-    if (bridgeRef.current) return;
-    bridgeRef.current = attachPaneBridge({
-      transport,
+    closePane();
+    const sessionRef = `sessSANDBOX${Date.now()}_${++epoch.current}`;
+    const url = new URL(SANDBOX_URL); url.searchParams.set("sessionRef", sessionRef);
+    demoBridge.current = attachPaneBridge({ sessionRef, sendStore: demoStore, transport,
       handlers: {
-        onReady: () => setStatus("pane ready"),
-        onZecSendRequest: async ({ requestId, address, amountZat }) => {
-          // Real hosts: native confirm sheet → wallet core (e.g. zingolib)
-          // signs the ZEC send → broadcast → return the txid.
-          const approved = true; // replace with your confirm UI
-          if (!approved) return { cancel: true, reason: "user declined" };
-          const txid = "f".repeat(64); // stub — replace with real broadcast result
-          setLastResult(`send ${amountZat} zat → ${address} (req ${requestId})`);
-          return { txid };
-        },
-        onResult: (r) => {
-          setLastResult(`advisory result: ${r.outcome} — reconcile via getStatus()`);
-          setStatus(`result: ${r.outcome}`);
-        },
-        onClose: () => setStatus("pane closed"),
+        onZecSendRequest: async (_request, { signal }) => await confirmSimulation(signal) ? { txid: "f".repeat(64) } : { cancel: true, reason: "simulation declined" },
+        onReady: () => setState(current => ({ ...current, message: "Sandbox pane ready" })),
+        onResult: () => setState(current => ({ ...current, message: "Simulated result only; no real settlement" })),
+        onClose: closePane,
+        onProtocolError: () => { closePane(); },
       },
     });
-    setStatus("bridge attached");
-  };
-
-  const onMessage = (event: WebViewMessageEvent) => {
-    listenerRef.current?.(event.nativeEvent.data);
-  };
-
-  // Origin lock: only 0xramp origins (https) — plus the dev sandbox pane — may load.
-  const onShouldStartLoadWithRequest = (request: WebViewNavigation): boolean => {
-    const allowed =
-      isAllowedPaneNavigation(request.url, ALLOWED_PANE_HOST_SUFFIXES) ||
-      request.url.startsWith(SANDBOX_PANE_URL);
-    if (!allowed) {
-      setStatus(`origin lock: blocked ${request.url.slice(0, 48)}…`);
-      return false;
-    }
-    return true;
-  };
-
-  return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
-      <StatusBar barStyle="dark-content" />
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 12, padding: 12 }}>
-        <TouchableOpacity onPress={startSession}>
-          <Text style={{ color: "#1d4ed8", fontWeight: "600" }}>Start ramp</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={attach}>
-          <Text style={{ color: "#1d4ed8", fontWeight: "600" }}>Attach bridge</Text>
-        </TouchableOpacity>
-        <Text style={{ color: "#374151", fontSize: 12, flexShrink: 1 }} numberOfLines={1}>
-          {status}
-        </Text>
-        <Text style={{ color: "#6b7280", fontSize: 11, marginLeft: "auto" }}>
-          Powered by 0xramp · P2P.me
-        </Text>
-      </View>
-      {lastResult === "" ? null : (
-        <Text style={{ color: "#047857", fontSize: 11, paddingHorizontal: 12, paddingBottom: 8 }}>
-          {lastResult}
-        </Text>
-      )}
-      <WebView
-        ref={webRef}
-        source={{ uri: paneUrl }}
-        onMessage={onMessage}
-        onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
-        originWhitelist={["https://0xramp.app", "https://*.0xramp.app", "http://localhost:*"]}
-        javaScriptEnabled
-        domStorageEnabled={false}
-      />
-    </SafeAreaView>
-  );
+    setState({ message: "Opening sandbox", active: true, blocked: false, pane: { url: url.href, sessionRef, generation: epoch.current } });
+  }
+  function allowed(url: string) {
+    if (!SANDBOX) return client.current?.isAllowedPaneUrl(url) ?? false;
+    try {
+      const candidate = new URL(url); const base = new URL(SANDBOX_URL);
+      return candidate.origin === base.origin && candidate.pathname === base.pathname && candidate.username === "" && candidate.password === "";
+    } catch { return false; }
+  }
+  return <SafeAreaView style={{ flex: 1, backgroundColor: "white" }}>
+    <View style={{ padding: 12, gap: 8 }}>
+      <Text>{SANDBOX ? "SANDBOX — no real money" : "0xramp partner example — wallet adapter disabled"}</Text>
+      <Text>Powered by 0xramp · P2P.me</Text>
+      <Text>{configurationError ? "Configuration unavailable. No session will be opened." : state.message}</Text>
+      {state.pane && <Text selectable>{new URL(state.pane.url).origin}</Text>}
+      <Button title={SANDBOX ? "Start simulation" : "Start SELL"} disabled={configurationError || (!SANDBOX && (state.active || state.blocked))} onPress={start} />
+      {!SANDBOX && <Button title="Resume saved session" disabled={!state.active || state.blocked || state.pane !== null} onPress={() => { void host.current?.resume(); }} />}
+      {!SANDBOX && <Button title="Check status" onPress={() => { void host.current?.refreshStatus(); }} />}
+      <Button title="Close pane" onPress={closePane} />
+    </View>
+    {state.pane && allowed(state.pane.url) && <WebView
+      key={`${state.pane.sessionRef}.${state.pane.generation}`} ref={webRef}
+      source={{ uri: state.pane.url }}
+      onMessage={event => { if (allowed(event.nativeEvent.url)) listener.current?.(event.nativeEvent.data); }}
+      onShouldStartLoadWithRequest={request => {
+        if (request.isTopFrame === false) return false;
+        if (allowed(request.url)) return true;
+        host.current?.handleReturn(request.url); return false;
+      }}
+      onError={closePane}
+      // Route all navigation through the callback; never auto-open arbitrary schemes.
+      originWhitelist={["*"]} setSupportMultipleWindows onOpenWindow={() => { /* Popups are refused; handoff requires an explicit host flow. */ }}
+      javaScriptEnabled domStorageEnabled
+      allowFileAccess={false} allowUniversalAccessFromFileURLs={false} mixedContentMode="never"
+    />}
+  </SafeAreaView>;
 }

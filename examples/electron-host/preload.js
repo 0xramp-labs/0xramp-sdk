@@ -1,9 +1,11 @@
 "use strict";
-
 const { contextBridge, ipcRenderer } = require("electron");
-
-// One-way logging channel: pane envelopes reach the main-process console.
-// (The reply path runs in the host page — see host.html.)
 contextBridge.exposeInMainWorld("pspElectron", {
-  sendToHost: (raw) => ipcRenderer.send("psp:from-host-page", raw),
+  send: raw => ipcRenderer.send("psp:from-host-page", raw),
+  ready: () => ipcRenderer.send("psp:host-loaded"),
+  subscribe: handler => {
+    const receive = (_event, value) => handler(value);
+    ipcRenderer.on("psp:to-host-page", receive);
+    return () => ipcRenderer.removeListener("psp:to-host-page", receive);
+  },
 });
