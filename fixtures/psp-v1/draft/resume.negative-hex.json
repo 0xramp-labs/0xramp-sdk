@@ -1,0 +1,9 @@
+{
+  "kind": "draft.zec-send-resume",
+  "name": "non-hex-txid",
+  "data": {
+    "url": "https://0xramp.app/partner/zingo?sessionRef=sessGOLDEN00000001",
+    "evidence": { "txid": "nothex" },
+    "expected": { "error": "SchemaViolation" }
+  }
+}

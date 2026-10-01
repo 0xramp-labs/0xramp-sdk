@@ -38,6 +38,7 @@
 
     <button id="btn-ready">Re-send psp/ready</button>
     <button id="btn-send">Simulate SELL → psp/zec-send-request</button>
+    <button id="btn-handoff">Simulate browser-mode handoff link (DRAFT)</button>
     <button id="btn-result">Simulate psp/result (settled)</button>
     <button id="btn-close">Simulate psp/close</button>
 
@@ -121,6 +122,19 @@
           address: "t1FakeAddrForFixtures9zqqqqqqqqqqqqq",
           amountZat: "5000000",
         });
+      });
+
+      // DRAFT — unfrozen, pending partner confirmation. Emits the draft pane →
+      // wallet handoff link for the browser-hosted pane mode (no bridge channel
+      // there). Encoding is reviewable and may change; see
+      // fixtures/psp-v1/draft/README.md and src/session/handoff.ts.
+      document.getElementById("btn-handoff").addEventListener("click", function () {
+        var link = "zramp://send?sessionRef=" + encodeURIComponent(sessionRef) +
+          "&requestId=reqSANDBOX00000001" +
+          "&address=t1FakeAddrForFixtures9zqqqqqqqqqqqqq" +
+          "&amountZat=5000000" +
+          "&memo=Draft%20handoff";
+        log("out", "→ DRAFT handoff link (browser-hosted mode, unfrozen): " + link);
       });
 
       document.getElementById("btn-result").addEventListener("click", function () {

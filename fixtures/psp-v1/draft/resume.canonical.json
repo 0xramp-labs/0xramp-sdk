@@ -1,0 +1,9 @@
+{
+  "kind": "draft.zec-send-resume",
+  "name": "canonical-resume-url",
+  "data": {
+    "url": "https://0xramp.app/partner/zingo?sessionRef=sessGOLDEN00000001",
+    "evidence": { "txid": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f" },
+    "expected": "https://0xramp.app/partner/zingo?sessionRef=sessGOLDEN00000001&txid=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  }
+}
