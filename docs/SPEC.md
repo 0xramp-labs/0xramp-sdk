@@ -4,7 +4,9 @@
 >
 > Companion documents: [`DESIGN.md`](./DESIGN.md) (architecture and trust model) · sandbox pane and golden wire fixtures ship in the repository (`sandbox/`, `fixtures/`).
 
-A TypeScript SDK for wallet apps that want to offer 0xramp ZEC ↔ local-fiat ramps (Pix, UPI, …) by hosting **`0xramp.app`** in an embedded WebView (origin visible). The wallet signs **only** Zcash sends from its own wallet core. Everything else — identity (passkeys), the Base account, P2P.me orders, quotes, limits, fraud screening, fiat payout — runs inside `0xramp.app`, unchanged.
+A TypeScript SDK for wallet apps that want to offer 0xramp ZEC ↔ local-fiat ramps (Pix, UPI, …) by hosting **`0xramp.app`** in an embedded WebView or in the system browser (origin visible either way). The wallet signs **only** Zcash sends from its own wallet core. Everything else — identity (passkeys), the Base account, P2P.me orders, quotes, limits, fraud screening, fiat payout — runs inside `0xramp.app`, unchanged.
+
+**Hosting modes.** Desktop hosts embed the pane in a WebView with the postMessage bridge. Mobile hosts (passkey-first products) open the pane in the system browser (auth-session, e.g. `openAuthSessionAsync`) — a supported hosting mode with no bridge channel: the pane drives the flow on-page and the host resumes via its registered return deep link; the ticketed status endpoint stays authoritative. See the partner guide's "Mobile: browser-hosted pane" section.
 
 **Attribution:** integrations must display **"Powered by 0xramp · P2P.me"** at the ramp entry point.
 
@@ -34,7 +36,9 @@ const { sessionUrl, sessionRef, statusTicket, expiresAt } = await ramp.createSes
   fiat: "BRL",                  // ISO code of a corridor 0xramp serves
   amountAsset: "0.05",          // optional decimal string (display units; exact quote is made in 0xramp.app)
   zecReceiver: "t1…",           // BUY: transparent Zcash address where ZEC lands
-  returnUrl: "mywallet://ramp", // register the scheme in your own app
+  returnUrl: "mywallet://ramp", // register the scheme in your own app;
+                                // letter-first (RFC 3986) or https — ConfigError
+                                // before the POST otherwise
   partnerSessionId,             // persist before POST; correlation only, not idempotency
 });
 

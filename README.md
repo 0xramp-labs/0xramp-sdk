@@ -1,6 +1,6 @@
 # @0xramp/sdk
 
-TypeScript SDK for wallet apps that want to offer 0xramp ZEC ↔ local-fiat ramps (Pix, UPI, …) by hosting **`0xramp.app`** in an embedded WebView — origin visible, always.
+TypeScript SDK for wallet apps that want to offer 0xramp ZEC ↔ local-fiat ramps (Pix, UPI, …) by hosting **`0xramp.app`** in an embedded WebView — origin visible, always. On mobile the pane can instead open in the **system browser** (browser-hosted mode; required for passkey-first products).
 
 Your wallet signs **only** ZEC sends from its own wallet core. Everything else — identity (passkeys), the Base account, P2P.me orders, quotes, limits, fraud screening, fiat payout — runs inside `0xramp.app`, unchanged.
 
@@ -24,6 +24,7 @@ Your wallet app                 0xramp.app (pane, in WebView)        0xramp host
 - **SELL (ZEC → fiat):** the pane reserves a NEAR Intents deposit route and asks your app to send the exact ZEC amount to a transparent deposit address. Your wallet signs that send — **the only signature you ever make**.
 - **BUY (fiat → ZEC):** the user pays a merchant on the fiat rail from their bank app; ZEC lands on the transparent address you provided.
 - Bridge results are **advisory**; authoritative state is the ticketed status endpoint plus your own view of the Zcash chain.
+- **Mobile:** the pane can also open in the **system browser** (browser-hosted mode) — required for passkey-first products, which WebViews cannot serve. See [Mobile: browser-hosted pane](docs/partner-guide.md#9-mobile-browser-hosted-pane).
 
 Details: [`docs/DESIGN.md`](docs/DESIGN.md) · full surface: [`docs/SPEC.md`](docs/SPEC.md).
 
@@ -92,6 +93,10 @@ bridge.close();
 ramp.restoreSession(await secureSessionStorage.load());
 ```
 
+On mobile you can skip the WebView: open `session.sessionUrl` in the system
+browser (browser-hosted mode, no bridge) and resume via your return scheme —
+see [Mobile: browser-hosted pane](docs/partner-guide.md#9-mobile-browser-hosted-pane).
+
 `myWallet`, storage and UI methods above are partner-owned ports. An approved
 send returns `{ txid }`; use `{ cancel: true, reason }` only when no broadcast
 occurred. Errors, ambiguous multiple transaction IDs and interrupted sends stay
@@ -112,7 +117,7 @@ Signs or moves funds · holds keys or custody · stores or transits payout keys 
 
 | Path | Contents |
 |---|---|
-| `docs/` | [`SPEC.md`](docs/SPEC.md) (public surface), [`DESIGN.md`](docs/DESIGN.md) (architecture), [partner guide](docs/partner-guide.md) (RN + Electron recipes) |
+| `docs/` | [`SPEC.md`](docs/SPEC.md) (public surface), [`DESIGN.md`](docs/DESIGN.md) (architecture), [partner guide](docs/partner-guide.md) (RN + Electron recipes, browser-hosted mobile) |
 | `src/` | `protocol/` (PSP-v1 types + validation) · `session/` (client) · `bridge/` (host-side bridge, origin lock) · `units/` (integer money math) |
 | `fixtures/` | PSP-v1 golden wire vectors (conformance set — both sides of the bridge validate against these) |
 | `sandbox/` | `sandbox-pane.html` — pane half of PSP-v1 against canned responses; develop hosts with zero 0xramp access |
