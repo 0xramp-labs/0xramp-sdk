@@ -49,6 +49,52 @@ describe("createRampClient", () => {
     await expect(client.createSession({ ...input, idempotencyKey: "guessable" })).rejects.toThrow("idempotencyKey");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  describe("createSession returnUrl scheme validation (fail early)", () => {
+    const createWithReturnUrl = (fetchMock: ReturnType<typeof vi.fn>, returnUrl: string) =>
+      createRampClient(makeConfig(fetchMock)).createSession({
+        direction: "sell",
+        asset: "ZEC",
+        fiat: "BRL",
+        returnUrl,
+      });
+
+    it("accepts letter-first custom schemes and forwards them in the POST body", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, SESSION_RESPONSE));
+      await createWithReturnUrl(fetchMock, "mywallet://ramp");
+      expect(JSON.parse(fetchMock.mock.calls[0]![1].body)["returnUrl"]).toBe("mywallet://ramp");
+    });
+
+    it("accepts https return URLs (universal/app links)", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, SESSION_RESPONSE));
+      await expect(createWithReturnUrl(fetchMock, "https://wallet.example/ramp?x=1")).resolves.toMatchObject({
+        sessionRef: SESSION_RESPONSE.sessionRef,
+      });
+    });
+
+    it("accepts schemes without // (consistent with parseReturnUrl)", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, SESSION_RESPONSE));
+      await expect(createWithReturnUrl(fetchMock, "zingo:ramp?sessionRef=sessGOLDEN00000001")).resolves.toBeDefined();
+    });
+
+    it.each(["0xrampzingolibrn://ramp", "ramp?x", ""])(
+      "rejects an invalid returnUrl scheme (%s) with ConfigError before any POST",
+      async returnUrl => {
+        const fetchMock = vi.fn();
+        await expect(createWithReturnUrl(fetchMock, returnUrl)).rejects.toMatchObject({ code: "ConfigError" });
+        expect(fetchMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it("still enforces the 2048-character bound after the scheme check", async () => {
+      const fetchMock = vi.fn();
+      await expect(
+        createWithReturnUrl(fetchMock, `mywallet://ramp?x=${"a".repeat(2048)}`),
+      ).rejects.toMatchObject({ code: "SchemaViolation" });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   it("locks a custom deployment to the exact origin, including its port", () => {
     const client = createRampClient(makeConfig(vi.fn(), { environment: "staging", apiBaseUrl: "https://partner.hosting.example" }));
     expect(client.isAllowedPaneUrl("https://partner.hosting.example/session")).toBe(true);
