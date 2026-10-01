@@ -125,6 +125,32 @@ Rules enforced by the SDK bridge:
 - `onSendRecoveryRequired` receives the pending reason/known transaction IDs.
   Display recovery without launching another wallet send.
 
+## Draft surface (unfrozen): browser-hosted handoff
+
+**Draft — pending partner confirmation; the encoding may change.** For the
+browser-hosted mobile mode, the SDK ships a draft deep-link handoff codec
+(root and `@0xramp/sdk/session`: `parseZecSendHandoffUrl`,
+`buildZecSendResumeUrl`):
+
+- `parseZecSendHandoffUrl(url, expected?)` parses a pane → wallet handoff
+  link (dedicated query params on the host's registered scheme: `sessionRef`,
+  `requestId`, transparent `address`, canonical integer `amountZat`, optional
+  `memo`). Fail closed: session mismatch → `SessionMismatch`, malformed
+  parameters → `SchemaViolation`, non-canonical amounts → `InvalidAmount`,
+  unparseable input → `InvalidReturnUrl`. The result is shape-compatible with
+  `ZecSendRequestPayload`, so existing `ZecSendStore` claim/journal semantics
+  apply unchanged (exactly-once, replay-safe).
+- `buildZecSendResumeUrl(baseUrl, evidence)` builds the wallet → pane resume
+  URL: an existing pane/return URL plus advisory txid evidence (`txid` and/or
+  comma-joined `txids`, 1–32 × 64-hex), consistent with the existing
+  txid/txids schema constraints.
+
+Draft, unfrozen, and excluded from the conformance set: draft vectors live in
+`fixtures/psp-v1/draft/` (not in the frozen golden set), **pane-side
+conformance is NOT claimed**, and the encoding may change before it freezes.
+Deep links are advisory by design; the wallet's native confirmation sheet is
+the approval gate and the ticketed status endpoint stays authoritative.
+
 ## Amounts, errors & security posture
 
 - **Amounts.** All money values are canonical decimal strings or integer-unit strings (`amountZat`: zatoshi, 10⁻⁸ ZEC). Never floats. Fiat/USDC legs use 6-decimal units.

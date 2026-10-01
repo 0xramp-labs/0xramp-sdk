@@ -617,6 +617,33 @@ your wallet sees it natively. Attribution
 ("Powered by 0xramp · P2P.me") is required at the ramp entry point in this
 mode too.
 
+### Stage 2 — deep-link handoff (DRAFT, unfrozen)
+
+A fast-follow, additive protocol removes the copy/paste step: the pane emits
+a handoff link carrying the payment request, your wallet confirms natively,
+signs with its own wallet core, and broadcasts; the resume link carries
+advisory txid(s) back to the pane. A **draft, unfrozen codec** ships in the
+SDK for early review — the encoding may change, and pane-side conformance is
+NOT claimed:
+
+- `parseZecSendHandoffUrl(url, { sessionRef })` parses a pane → wallet
+  handoff link (dedicated query params on YOUR registered scheme:
+  `sessionRef`, `requestId`, transparent `address`, canonical integer
+  `amountZat`, optional `memo`). It fails closed on session mismatch,
+  malformed parameters, and non-canonical amounts, and returns a
+  `ZecSendRequestPayload`-shaped request — so the existing `sendStore`
+  claim/journal semantics apply unchanged (exactly-once, replay-safe).
+- `buildZecSendResumeUrl(baseUrl, { txid?, txids? })` appends advisory txid
+  evidence (1–32 × 64-hex) to an existing pane/return URL.
+
+Trust model: deep links are spoofable by design. The parsed handoff is a
+payment **request** — your wallet's native confirmation sheet remains the
+only approval gate, and the SDK never signs — and resume txids are advisory
+evidence the pane reconciles; the ticketed status endpoint stays
+authoritative. Draft wire vectors live in `fixtures/psp-v1/draft/`
+(explicitly excluded from the frozen PSP-v1 conformance set). Do not build
+production flows on this encoding before it freezes.
+
 ## 10. Local test checklist (sandbox)
 
 The sandbox pane (`sandbox/sandbox-pane.html`) supplies synthetic browser and
