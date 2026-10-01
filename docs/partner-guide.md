@@ -579,7 +579,7 @@ cannot prove them.
 - **Letter-first, per RFC 3986** (`^[a-zA-Z][a-zA-Z0-9+.-]*:`).
   `createSession` rejects anything else with `ConfigError` before the POST —
   digit-first schemes fail, and so does a value with no scheme prefix at all.
-  Accept values include custom schemes with or without `//`
+  Accepted values include custom schemes with or without `//`
   (`mywallet://ramp`, `zingo:ramp?…`) and `https:` URLs (universal/app
   links).
 - Register and route the scheme in your own app (Linking config / intent
