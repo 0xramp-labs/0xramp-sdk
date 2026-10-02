@@ -24,6 +24,7 @@ const MAX_RETURN_URL_LENGTH = 2048;
 
 /**
  * Parse a return deep-link (e.g. `zingo://ramp?sessionRef=…&outcome=…`).
+ * A trailing `#fragment` is ignored, never read as part of the query.
  * Never throws for missing fields — absent values are surfaced as `null`.
  * Throws `InvalidReturnUrlError` only for structurally unparseable input.
  */
@@ -33,17 +34,19 @@ export function parseReturnUrl(url: string): ParsedReturnUrl {
   }
   let params: URLSearchParams;
   try {
-    const schemeSeparator = url.indexOf("://");
+    const fragmentStart = url.indexOf("#");
+    const withoutFragment = fragmentStart === -1 ? url : url.slice(0, fragmentStart);
+    const schemeSeparator = withoutFragment.indexOf("://");
     if (schemeSeparator === -1) {
       // Custom schemes without `://` (e.g. `zingo:ramp?...`) — extract the query directly.
-      const queryStart = url.indexOf("?");
+      const queryStart = withoutFragment.indexOf("?");
       if (queryStart === -1) {
         params = new URLSearchParams();
       } else {
-        params = new URLSearchParams(url.slice(queryStart + 1));
+        params = new URLSearchParams(withoutFragment.slice(queryStart + 1));
       }
     } else {
-      params = new URLSearchParams(new URL(url, "https://0xramp.invalid").search);
+      params = new URLSearchParams(new URL(withoutFragment, "https://0xramp.invalid").search);
     }
   } catch {
     throw new InvalidReturnUrlError("return URL could not be parsed");

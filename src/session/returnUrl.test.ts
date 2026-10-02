@@ -19,6 +19,13 @@ describe("parseReturnUrl", () => {
     expect(parsed.outcome).toBe("failed");
   });
 
+  it("ignores a trailing #fragment on schemes without ://", () => {
+    const parsed = parseReturnUrl("zingo:ramp?sessionRef=sessGOLDEN00000001&outcome=failed#debug");
+    expect(parsed.sessionRef).toBe("sessGOLDEN00000001");
+    expect(parsed.outcome).toBe("failed");
+    expect(parsed.params.get("outcome")).toBe("failed");
+  });
+
   it("returns nulls for absent/unknown fields", () => {
     const parsed = parseReturnUrl("zingo://ramp?foo=bar");
     expect(parsed.sessionRef).toBeNull();

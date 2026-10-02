@@ -4,7 +4,9 @@
 >
 > Companion documents: [`DESIGN.md`](./DESIGN.md) (architecture and trust model) · sandbox pane and golden wire fixtures ship in the repository (`sandbox/`, `fixtures/`).
 
-A TypeScript SDK for wallet apps that want to offer 0xramp ZEC ↔ local-fiat ramps (Pix, UPI, …) by hosting **`0xramp.app`** in an embedded WebView (origin visible). The wallet signs **only** Zcash sends from its own wallet core. Everything else — identity (passkeys), the Base account, P2P.me orders, quotes, limits, fraud screening, fiat payout — runs inside `0xramp.app`, unchanged.
+A TypeScript SDK for wallet apps that want to offer 0xramp ZEC ↔ local-fiat ramps (Pix, UPI, …) by hosting **`0xramp.app`** in an embedded WebView or in the system browser (origin visible either way). The wallet signs **only** Zcash sends from its own wallet core. Everything else — identity (passkeys), the Base account, P2P.me orders, quotes, limits, fraud screening, fiat payout — runs inside `0xramp.app`, unchanged.
+
+**Hosting modes.** Desktop hosts embed the pane in a WebView with the postMessage bridge. Mobile hosts (passkey-first products) open the pane in the system browser (auth-session, e.g. `openAuthSessionAsync`) — a supported hosting mode with no bridge channel: the pane drives the flow on-page and the host resumes via its registered return deep link (return-link navigation is planned pane-side work; not yet live in the deployed pane — see the partner guide); the ticketed status endpoint stays authoritative. See the partner guide's "Mobile: browser-hosted pane" section.
 
 **Attribution:** integrations must display **"Powered by 0xramp · P2P.me"** at the ramp entry point.
 
@@ -34,7 +36,9 @@ const { sessionUrl, sessionRef, statusTicket, expiresAt } = await ramp.createSes
   fiat: "BRL",                  // ISO code of a corridor 0xramp serves
   amountAsset: "0.05",          // optional decimal string (display units; exact quote is made in 0xramp.app)
   zecReceiver: "t1…",           // BUY: transparent Zcash address where ZEC lands
-  returnUrl: "mywallet://ramp", // register the scheme in your own app
+  returnUrl: "mywallet://ramp", // register the scheme in your own app;
+                                // letter-first (RFC 3986) or https — ConfigError
+                                // before the POST otherwise
   partnerSessionId,             // persist before POST; correlation only, not idempotency
 });
 
@@ -120,6 +124,36 @@ Rules enforced by the SDK bridge:
   recovery must be backed by wallet history, and persistence failures reject.
 - `onSendRecoveryRequired` receives the pending reason/known transaction IDs.
   Display recovery without launching another wallet send.
+
+## Draft surface (unfrozen): browser-hosted handoff
+
+**Draft — pending partner confirmation; the encoding may change.** For the
+browser-hosted mobile mode, the SDK ships a draft deep-link handoff codec
+(root and `@0xramp/sdk/session`: `parseZecSendHandoffUrl`,
+`buildZecSendResumeUrl`):
+
+- `parseZecSendHandoffUrl(url, expected)` parses a pane → wallet handoff
+  link (dedicated query params on the host's registered scheme: `sessionRef`,
+  `requestId`, transparent `address`, canonical integer `amountZat`, optional
+  `memo`). The expected session is **required**: a link from any other
+  session → `SessionMismatch`. Fail closed: duplicated query parameters or
+  malformed parameters → `SchemaViolation`, non-canonical amounts →
+  `InvalidAmount`, unparseable input → `InvalidReturnUrl`; a trailing
+  `#fragment` is ignored, never read as query. The result is shape-compatible
+  with `ZecSendRequestPayload`, so existing `ZecSendStore` claim/journal
+  semantics apply unchanged (exactly-once, replay-safe).
+- `buildZecSendResumeUrl(baseUrl, evidence)` builds the wallet → pane resume
+  URL: an existing pane/return URL plus advisory txid evidence (`txid` and/or
+  comma-joined `txids`, 1–32 × 64-hex), consistent with the existing
+  txid/txids schema constraints. The 2048-character deep-link bound binds
+  first: depending on the base URL, roughly 28–30 txids fit — larger evidence
+  sets fail closed (`InvalidReturnUrl`) and reconcile via the status endpoint.
+
+Draft, unfrozen, and excluded from the conformance set: draft vectors live in
+`fixtures/psp-v1/draft/` (not in the frozen golden set), **pane-side
+conformance is NOT claimed**, and the encoding may change before it freezes.
+Deep links are advisory by design; the wallet's native confirmation sheet is
+the approval gate and the ticketed status endpoint stays authoritative.
 
 ## Amounts, errors & security posture
 

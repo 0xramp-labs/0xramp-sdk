@@ -1,7 +1,8 @@
 /**
  * `@0xramp/sdk/session` — partner session client: `createRampClient`
- * (channels 1 & 4 + bridge factory), environment resolution, and return
- * deep-link parsing (channel 5, advisory).
+ * (channels 1 & 4 + bridge factory), environment resolution, return
+ * deep-link parsing (channel 5, advisory), and the DRAFT/unfrozen
+ * browser-hosted handoff codec.
  */
 export {
   createRampClient,
@@ -23,3 +24,9 @@ export {
   type SdkEnvironment,
 } from "./environments.js";
 export { parseReturnUrl, type ParsedReturnUrl } from "./returnUrl.js";
+export {
+  buildZecSendResumeUrl,
+  parseZecSendHandoffUrl,
+  type ParsedZecSendHandoff,
+  type ZecSendResumeEvidence,
+} from "./handoff.js";

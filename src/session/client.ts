@@ -63,6 +63,14 @@ function redactedRequestPath(path: string): string {
   return path;
 }
 
+/**
+ * RFC 3986 scheme: it must start with a letter, so OS-level scheme routing
+ * (e.g. Expo/Expo Linking, Android intent filters) can accept the value.
+ * Enforced client-side before the create POST so the wire schema and the
+ * positive-only fixture set stay untouched.
+ */
+const LETTER_FIRST_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+
 /** Supported pane locales for the hosted ramp experience. */
 export type RampLocale = "pt" | "en" | "es" | "hi" | "id";
 
@@ -265,6 +273,9 @@ export function createRampClient(config: RampClientConfig): RampClient {
     async createSession(input: CreateSessionInput): Promise<RampSession> {
       if (input.idempotencyKey !== undefined && (typeof input.idempotencyKey !== "string" || !/^[A-Za-z0-9_-]{32,128}$/.test(input.idempotencyKey))) {
         throw new ConfigError("idempotencyKey must be 32–128 characters of [A-Za-z0-9_-]");
+      }
+      if (input.returnUrl !== undefined && !LETTER_FIRST_SCHEME.test(input.returnUrl)) {
+        throw new ConfigError("returnUrl must carry a letter-first URL scheme (RFC 3986) — e.g. mywallet://ramp, zingo:ramp, or https://…");
       }
       const body: CreateSessionRequestBody = {
         partnerId: config.partnerId,

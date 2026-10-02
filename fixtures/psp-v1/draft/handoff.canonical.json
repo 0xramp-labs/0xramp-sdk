@@ -1,0 +1,16 @@
+{
+  "kind": "draft.zec-send-handoff",
+  "name": "canonical-handoff-link",
+  "data": {
+    "url": "zramp://send?sessionRef=sessGOLDEN00000001&requestId=reqGOLDEN00000001&address=t1FakeAddrForFixtures9zqqqqqqqqqqqqq&amountZat=5000000",
+    "parse": {
+      "sessionRef": "sessGOLDEN00000001"
+    },
+    "expected": {
+      "sessionRef": "sessGOLDEN00000001",
+      "requestId": "reqGOLDEN00000001",
+      "address": "t1FakeAddrForFixtures9zqqqqqqqqqqqqq",
+      "amountZat": "5000000"
+    }
+  }
+}

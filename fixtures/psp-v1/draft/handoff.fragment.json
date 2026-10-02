@@ -1,0 +1,15 @@
+{
+  "kind": "draft.zec-send-handoff",
+  "name": "fragment-ignored-on-scheme-without-slashes",
+  "data": {
+    "url": "zramp:send?sessionRef=sessGOLDEN00000001&requestId=reqGOLDEN00000001&address=t1FakeAddrForFixtures9zqqqqqqqqqqqqq&amountZat=5000000&memo=Deposit%20fee#debug",
+    "parse": { "sessionRef": "sessGOLDEN00000001" },
+    "expected": {
+      "sessionRef": "sessGOLDEN00000001",
+      "requestId": "reqGOLDEN00000001",
+      "address": "t1FakeAddrForFixtures9zqqqqqqqqqqqqq",
+      "amountZat": "5000000",
+      "memo": "Deposit fee"
+    }
+  }
+}
