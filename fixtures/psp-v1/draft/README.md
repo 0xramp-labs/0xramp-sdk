@@ -16,12 +16,13 @@ Files are self-describing `{ kind, name, data }` objects, loaded and enforced
 by `src/session/handoff.fixtures.test.ts`:
 
 - `draft.zec-send-handoff` — pane → wallet handoff links.
-  - Positive: `data: { url, expected }` — `parseZecSendHandoffUrl(url)` must
-    deep-equal `expected` (`sessionRef` plus the `ZecSendRequestPayload`
-    fields).
-  - Negative: `data: { url, parse?, expected: { error } }` — parsing must
-    throw the named PSP error code; the optional `parse.sessionRef` is passed
-    as the expected-session argument.
+  - Positive: `data: { url, parse, expected }` —
+    `parseZecSendHandoffUrl(url, parse)` must deep-equal `expected`
+    (`sessionRef` plus the `ZecSendRequestPayload` fields). Every vector
+    binds a session: `parse.sessionRef` is required.
+  - Negative: `data: { url, parse, expected: { error } }` — parsing must
+    throw the named PSP error code; `parse.sessionRef` is passed as the
+    expected-session argument.
 - `draft.zec-send-resume` — wallet → pane resume URLs.
   - Positive: `data: { url, evidence, expected }` —
     `buildZecSendResumeUrl(url, evidence)` must equal the `expected` string.
@@ -33,9 +34,14 @@ by `src/session/handoff.fixtures.test.ts`:
 
 - Handoff link: dedicated query params on the host's registered scheme —
   `sessionRef`, `requestId`, `address` (transparent t-addr), `amountZat`
-  (canonical integer zatoshi string), optional `memo` (≤ 512 chars).
+  (canonical integer zatoshi string), optional `memo` (≤ 512 chars). Parsing
+  fails closed on duplicated query params, ignores a trailing `#fragment`,
+  and requires the expected session to match.
 - Resume link: an existing pane/return URL plus advisory evidence params
-  `txid=<64-hex>` and/or `txids=<comma-separated 64-hex, 1–32>`.
+  `txid=<64-hex>` and/or `txids=<comma-separated 64-hex, 1–32>`. The
+  2048-character deep-link bound binds first: depending on the base URL,
+  roughly 28–30 txids fit — larger evidence sets reconcile via the status
+  endpoint.
 
 Deep links are spoofable by design: handoff parses are payment *requests* for
 the wallet's native confirmation sheet, and resume txids are advisory evidence

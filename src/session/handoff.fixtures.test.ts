@@ -59,8 +59,10 @@ describe("PSP-v1 draft handoff vectors (unfrozen)", () => {
   it("discovers the draft vector set", () => {
     const names = fixtures.map((f) => f.file);
     expect(names).toContain("handoff.canonical.json");
+    expect(names).toContain("handoff.fragment.json");
     expect(names).toContain("handoff.memo-scheme.json");
     expect(names).toContain("handoff.negative-amount.json");
+    expect(names).toContain("handoff.negative-duplicate-param.json");
     expect(names).toContain("handoff.negative-mismatch.json");
     expect(names).toContain("resume.canonical.json");
     expect(names).toContain("resume.negative-hex.json");
@@ -75,6 +77,9 @@ describe("PSP-v1 draft handoff vectors (unfrozen)", () => {
           : undefined;
 
       if (fixture.kind === "draft.zec-send-handoff") {
+        if (parse === undefined) {
+          throw new Error(`handoff vector ${file} must bind a session via parse.sessionRef`);
+        }
         if (expectedError !== undefined) {
           expectErrorCode(() => parseZecSendHandoffUrl(url, parse), expectedError);
         } else {

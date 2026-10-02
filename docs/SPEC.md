@@ -132,18 +132,22 @@ browser-hosted mobile mode, the SDK ships a draft deep-link handoff codec
 (root and `@0xramp/sdk/session`: `parseZecSendHandoffUrl`,
 `buildZecSendResumeUrl`):
 
-- `parseZecSendHandoffUrl(url, expected?)` parses a pane → wallet handoff
+- `parseZecSendHandoffUrl(url, expected)` parses a pane → wallet handoff
   link (dedicated query params on the host's registered scheme: `sessionRef`,
   `requestId`, transparent `address`, canonical integer `amountZat`, optional
-  `memo`). Fail closed: session mismatch → `SessionMismatch`, malformed
-  parameters → `SchemaViolation`, non-canonical amounts → `InvalidAmount`,
-  unparseable input → `InvalidReturnUrl`. The result is shape-compatible with
-  `ZecSendRequestPayload`, so existing `ZecSendStore` claim/journal semantics
-  apply unchanged (exactly-once, replay-safe).
+  `memo`). The expected session is **required**: a link from any other
+  session → `SessionMismatch`. Fail closed: duplicated query parameters or
+  malformed parameters → `SchemaViolation`, non-canonical amounts →
+  `InvalidAmount`, unparseable input → `InvalidReturnUrl`; a trailing
+  `#fragment` is ignored, never read as query. The result is shape-compatible
+  with `ZecSendRequestPayload`, so existing `ZecSendStore` claim/journal
+  semantics apply unchanged (exactly-once, replay-safe).
 - `buildZecSendResumeUrl(baseUrl, evidence)` builds the wallet → pane resume
   URL: an existing pane/return URL plus advisory txid evidence (`txid` and/or
   comma-joined `txids`, 1–32 × 64-hex), consistent with the existing
-  txid/txids schema constraints.
+  txid/txids schema constraints. The 2048-character deep-link bound binds
+  first: depending on the base URL, roughly 28–30 txids fit — larger evidence
+  sets fail closed (`InvalidReturnUrl`) and reconcile via the status endpoint.
 
 Draft, unfrozen, and excluded from the conformance set: draft vectors live in
 `fixtures/psp-v1/draft/` (not in the frozen golden set), **pane-side

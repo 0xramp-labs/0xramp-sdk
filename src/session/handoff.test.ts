@@ -32,8 +32,10 @@ const CANONICAL_HANDOFF =
   `&address=${ADDRESS}&amountZat=${AMOUNT_ZAT}`;
 
 describe("parseZecSendHandoffUrl", () => {
+  const EXPECTED = { sessionRef: SESSION_REF };
+
   it("parses the canonical draft handoff link", () => {
-    expect(parseZecSendHandoffUrl(CANONICAL_HANDOFF)).toEqual({
+    expect(parseZecSendHandoffUrl(CANONICAL_HANDOFF, EXPECTED)).toEqual({
       sessionRef: SESSION_REF,
       requestId: REQUEST_ID,
       address: ADDRESS,
@@ -42,27 +44,42 @@ describe("parseZecSendHandoffUrl", () => {
   });
 
   it("omits the memo key when the link carries none", () => {
-    expect(parseZecSendHandoffUrl(CANONICAL_HANDOFF)).not.toHaveProperty("memo");
+    expect(parseZecSendHandoffUrl(CANONICAL_HANDOFF, EXPECTED)).not.toHaveProperty("memo");
   });
 
   it("matches an expected sessionRef", () => {
     expect(parseZecSendHandoffUrl(CANONICAL_HANDOFF, { sessionRef: SESSION_REF }).requestId).toBe(REQUEST_ID);
   });
 
-  it("parses schemes without // (consistent with parseReturnUrl)", () => {
-    const parsed = parseZecSendHandoffUrl(`zramp:send?sessionRef=${SESSION_REF}&requestId=${REQUEST_ID}&address=${ADDRESS}&amountZat=${AMOUNT_ZAT}`);
-    expect(parsed.address).toBe(ADDRESS);
-  });
-
-  it("decodes an optional memo", () => {
-    const parsed = parseZecSendHandoffUrl(`${CANONICAL_HANDOFF}&memo=Deposit%20fee`);
-    expect(parsed.memo).toBe("Deposit fee");
-  });
-
-  it("throws SessionMismatch for a link of another session", () => {
+  it("throws SessionMismatch for a link of another session (expected is required)", () => {
     expect(() => parseZecSendHandoffUrl(CANONICAL_HANDOFF, { sessionRef: "sessOTHER000000001" })).toThrow(
       SessionMismatchError,
     );
+  });
+
+  it("parses schemes without // (consistent with parseReturnUrl)", () => {
+    const parsed = parseZecSendHandoffUrl(`zramp:send?sessionRef=${SESSION_REF}&requestId=${REQUEST_ID}&address=${ADDRESS}&amountZat=${AMOUNT_ZAT}`, EXPECTED);
+    expect(parsed.address).toBe(ADDRESS);
+  });
+
+  it("ignores a trailing #fragment on schemes without //", () => {
+    const parsed = parseZecSendHandoffUrl(`${CANONICAL_HANDOFF}&memo=Deposit%20fee#debug`, EXPECTED);
+    expect(parsed.memo).toBe("Deposit fee");
+  });
+
+  it.each([
+    ["amountZat", `&amountZat=${AMOUNT_ZAT}&amountZat=9000000`],
+    ["sessionRef", `?sessionRef=${SESSION_REF}&sessionRef=${SESSION_REF}`],
+  ])("fails closed on a duplicated %s parameter", (_name, suffix) => {
+    const url = suffix.startsWith("?sessionRef")
+      ? `zramp://send${suffix}&requestId=${REQUEST_ID}&address=${ADDRESS}&amountZat=${AMOUNT_ZAT}`
+      : `${CANONICAL_HANDOFF}${suffix}`;
+    expect(() => parseZecSendHandoffUrl(url, EXPECTED)).toThrow(SchemaViolationError);
+  });
+
+  it("decodes an optional memo", () => {
+    const parsed = parseZecSendHandoffUrl(`${CANONICAL_HANDOFF}&memo=Deposit%20fee`, EXPECTED);
+    expect(parsed.memo).toBe("Deposit fee");
   });
 
   it.each([
@@ -73,16 +90,16 @@ describe("parseZecSendHandoffUrl", () => {
     ["shielded address", `zramp://send?sessionRef=${SESSION_REF}&requestId=${REQUEST_ID}&address=zs1vulnerable&amountZat=${AMOUNT_ZAT}`],
     ["memo over 512 chars", `${CANONICAL_HANDOFF}&memo=${"m".repeat(513)}`],
   ])("fails closed on %s", (_name, url) => {
-    expect(() => parseZecSendHandoffUrl(url)).toThrow(SchemaViolationError);
+    expect(() => parseZecSendHandoffUrl(url, EXPECTED)).toThrow(SchemaViolationError);
   });
 
   it.each(["5.5", "-5", "05", "1e3", ""])("fails closed on non-canonical amountZat %s", amountZat => {
     const url = `zramp://send?sessionRef=${SESSION_REF}&requestId=${REQUEST_ID}&address=${ADDRESS}&amountZat=${amountZat}`;
-    expect(() => parseZecSendHandoffUrl(url)).toThrow(InvalidAmountError);
+    expect(() => parseZecSendHandoffUrl(url, EXPECTED)).toThrow(InvalidAmountError);
   });
 
   it.each(["", `zramp://send?x=${"a".repeat(3000)}`])("throws InvalidReturnUrl for unparseable/oversized input", url => {
-    expect(() => parseZecSendHandoffUrl(url)).toThrow(InvalidReturnUrlError);
+    expect(() => parseZecSendHandoffUrl(url, EXPECTED)).toThrow(InvalidReturnUrlError);
   });
 
   it("feeds the existing ZecSendStore claim/journal semantics unchanged", async () => {
@@ -149,5 +166,11 @@ describe("buildZecSendResumeUrl", () => {
     expect(() => buildZecSendResumeUrl("https://0xramp.app/x", { txids: Array.from({ length: 32 }, () => TXID) })).toThrow(
       InvalidReturnUrlError,
     );
+  });
+
+  it("builds realistic evidence sets that fit the 2048-character deep-link bound (28 txids)", () => {
+    const resume = buildZecSendResumeUrl(PANE_URL, { txids: Array.from({ length: 28 }, () => TXID) });
+    expect(resume.startsWith(PANE_URL)).toBe(true);
+    expect(resume.length).toBeLessThanOrEqual(2048);
   });
 });

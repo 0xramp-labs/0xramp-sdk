@@ -42,6 +42,24 @@ import { parseZatoshi } from "../units/decimal.js";
 /** Same practical deep-link bound as return URLs (see `parseReturnUrl`). */
 const MAX_HANDOFF_URL_LENGTH = 2048;
 
+/** Query parameters the handoff codec consumes; each may appear at most once. */
+const HANDOFF_PARAMS = ["sessionRef", "requestId", "address", "amountZat", "memo"] as const;
+
+/**
+ * Query extraction mirroring `parseReturnUrl`: custom schemes may appear with
+ * or without `//`. A trailing `#fragment` is never part of the query.
+ */
+function handoffQueryParams(url: string): URLSearchParams {
+  const fragmentStart = url.indexOf("#");
+  const withoutFragment = fragmentStart === -1 ? url : url.slice(0, fragmentStart);
+  const schemeSeparator = withoutFragment.indexOf("://");
+  if (schemeSeparator === -1) {
+    const queryStart = withoutFragment.indexOf("?");
+    return new URLSearchParams(queryStart === -1 ? "" : withoutFragment.slice(queryStart + 1));
+  }
+  return new URLSearchParams(new URL(withoutFragment, "https://0xramp.invalid").search);
+}
+
 /**
  * **DRAFT — unfrozen, pending partner confirmation.** Canonical parse
  * result: `sessionRef` plus a `ZecSendRequestPayload`-shaped request, ready
@@ -49,31 +67,25 @@ const MAX_HANDOFF_URL_LENGTH = 2048;
  */
 export type ParsedZecSendHandoff = ZecSendRequestPayload & { sessionRef: string };
 
-/** Query extraction mirroring `parseReturnUrl`: custom schemes may appear with or without `//`. */
-function handoffQueryParams(url: string): URLSearchParams {
-  const schemeSeparator = url.indexOf("://");
-  if (schemeSeparator === -1) {
-    const queryStart = url.indexOf("?");
-    return new URLSearchParams(queryStart === -1 ? "" : url.slice(queryStart + 1));
-  }
-  return new URLSearchParams(new URL(url, "https://0xramp.invalid").search);
-}
-
 /**
  * **DRAFT — unfrozen, pending partner confirmation.** Parse a pane → wallet
  * handoff link carrying the payment request (session/request correlation ID,
  * transparent deposit address, exact integer zatoshi amount, optional memo).
  *
- * Fail closed: missing/malformed parameters throw `SchemaViolationError`,
- * non-canonical amounts throw `InvalidAmountError`, unparseable input throws
- * `InvalidReturnUrlError`, and — when `expected.sessionRef` is given — a
- * link for a different session throws `SessionMismatchError`. The wallet's
- * native confirmation sheet remains the approval gate; this function never
- * signs and never moves funds.
+ * `expected.sessionRef` is **required**: a link from any other session throws
+ * `SessionMismatchError`, so a well-formed link can never be accepted without
+ * binding it to the host's session.
+ *
+ * Fail closed: missing/malformed parameters throw `SchemaViolationError`
+ * (including any query parameter appearing more than once), non-canonical
+ * amounts throw `InvalidAmountError`, unparseable input throws
+ * `InvalidReturnUrlError`, and a link for a different session throws
+ * `SessionMismatchError`. The wallet's native confirmation sheet remains the
+ * approval gate; this function never signs and never moves funds.
  */
 export function parseZecSendHandoffUrl(
   url: string,
-  expected?: { sessionRef: string },
+  expected: { sessionRef: string },
 ): ParsedZecSendHandoff {
   if (url.length === 0 || url.length > MAX_HANDOFF_URL_LENGTH) {
     throw new InvalidReturnUrlError("handoff URL length out of bounds");
@@ -84,12 +96,17 @@ export function parseZecSendHandoffUrl(
   } catch {
     throw new InvalidReturnUrlError("handoff URL could not be parsed");
   }
+  for (const key of HANDOFF_PARAMS) {
+    if (params.getAll(key).length > 1) {
+      throw new SchemaViolationError("handoff link carries duplicate parameters");
+    }
+  }
 
   const sessionRef = params.get("sessionRef");
   if (sessionRef === null || !sessionRefSchema.safeParse(sessionRef).success) {
     throw new SchemaViolationError("handoff link carries no well-formed sessionRef");
   }
-  if (expected !== undefined && sessionRef !== expected.sessionRef) {
+  if (sessionRef !== expected.sessionRef) {
     throw new SessionMismatchError("handoff link belongs to a different session");
   }
 
@@ -141,6 +158,8 @@ export interface ZecSendResumeEvidence {
  * Fail closed on an unparseable base (`InvalidReturnUrlError`), missing
  * evidence (`ConfigError`), schema-violating values (`SchemaViolationError`),
  * or output beyond the 2048-character deep-link bound (`InvalidReturnUrlError`).
+ * The 2048-character bound binds first: depending on the base URL, roughly
+ * 28–30 txids fit; reconcile larger evidence sets via the status endpoint.
  */
 export function buildZecSendResumeUrl(baseUrl: string, evidence: ZecSendResumeEvidence): string {
   let parsed: URL;

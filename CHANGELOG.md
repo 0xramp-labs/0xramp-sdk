@@ -20,12 +20,16 @@ All notable changes to this project are documented here. Format based on
   state); DESIGN and SPEC name the hosting modes.
 - Draft zec-send deep-link handoff codec for that mode — **unfrozen, pending
   partner confirmation; encoding may change and pane-side conformance is not
-  claimed**: `parseZecSendHandoffUrl` (pane → wallet payment request,
-  fail-closed on session mismatch, malformed parameters, and non-canonical
-  amounts; output is `ZecSendRequestPayload`-compatible so the existing
+  claimed**: `parseZecSendHandoffUrl` (pane → wallet payment request; the
+  expected session is required — a link from any other session throws
+  `SessionMismatch`; fail-closed on duplicated query parameters, malformed
+  parameters, and non-canonical amounts; a trailing `#fragment` is ignored;
+  output is `ZecSendRequestPayload`-compatible so the existing
   `sendStore` claim/journal semantics apply unchanged) and
   `buildZecSendResumeUrl` (wallet → pane resume URL with advisory txid
-  evidence, 1–32 × 64-hex). Exported from the root package and
+  evidence, 1–32 × 64-hex; the 2048-character deep-link bound binds first —
+  roughly 28–30 txids fit on realistic pane URLs, larger sets reconcile via
+  the status endpoint). Exported from the root package and
   `@0xramp/sdk/session`. Draft vectors live in `fixtures/psp-v1/draft/`
   (excluded from the frozen PSP-v1 conformance set by layout, documented in
   its README) and are regression-protected by a colocated draft-vector test.
@@ -41,6 +45,12 @@ All notable changes to this project are documented here. Format based on
   value exactly — a query string or fragment makes session create fail with
   403. Enforced client-side: the wire schema and golden fixtures are
   unchanged.
+
+### Fixed
+
+- `parseReturnUrl` no longer reads a `#fragment` as part of the query in
+  scheme-without-`//` links (e.g. `zingo:ramp?…#f`): the fragment is ignored,
+  matching the URL standard.
 
 ## [0.0.2] — 2026-09-22 (partner integration hardening)
 
