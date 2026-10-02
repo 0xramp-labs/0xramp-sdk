@@ -14,8 +14,10 @@ All notable changes to this project are documented here. Format based on
   cannot serve (no WebAuthn on Android WebView; iOS WKWebView would need a
   `webcredentials` association file 0xramp does not serve). The partner guide
   gains a "Mobile: browser-hosted pane" recipe (create → open → return link →
-  authoritative status, stage-1 SELL without any bridge); DESIGN and SPEC
-  name the hosting modes.
+  authoritative status, stage-1 SELL without any bridge) — **planned
+  pane-side work, not yet live in the deployed pane** (no QR/copy outside a
+  native WebView; no return-link navigation yet; the guide marks the current
+  state); DESIGN and SPEC name the hosting modes.
 - Draft zec-send deep-link handoff codec for that mode — **unfrozen, pending
   partner confirmation; encoding may change and pane-side conformance is not
   claimed**: `parseZecSendHandoffUrl` (pane → wallet payment request,
@@ -34,8 +36,11 @@ All notable changes to this project are documented here. Format based on
 - `createSession` now rejects a `returnUrl` whose scheme is not letter-first
   per RFC 3986 with `ConfigError` before any POST — digit-first schemes and
   values without a scheme prefix fail closed; `https:` URLs and schemes
-  without `//` are accepted; an absent `returnUrl` stays a no-op. Enforced
-  client-side: the wire schema and golden fixtures are unchanged.
+  without `//` are accepted; an absent `returnUrl` stays a no-op. Register
+  the exact string: the server's return-link allowlist compares the full
+  value exactly — a query string or fragment makes session create fail with
+  403. Enforced client-side: the wire schema and golden fixtures are
+  unchanged.
 
 ## [0.0.2] — 2026-09-22 (partner integration hardening)
 

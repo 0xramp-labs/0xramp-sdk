@@ -275,7 +275,7 @@ export function createRampClient(config: RampClientConfig): RampClient {
         throw new ConfigError("idempotencyKey must be 32–128 characters of [A-Za-z0-9_-]");
       }
       if (input.returnUrl !== undefined && !LETTER_FIRST_SCHEME.test(input.returnUrl)) {
-        throw new ConfigError("returnUrl must carry a letter-first URL scheme (RFC 3986) — e.g. mywallet://ramp, zingo:ramp?…, or https://…");
+        throw new ConfigError("returnUrl must carry a letter-first URL scheme (RFC 3986) — e.g. mywallet://ramp, zingo:ramp, or https://…");
       }
       const body: CreateSessionRequestBody = {
         partnerId: config.partnerId,

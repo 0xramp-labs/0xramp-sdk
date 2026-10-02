@@ -18,7 +18,7 @@ flows — those live inside `0xramp.app` and never cross the bridge.
 |---|---|
 | Host | Your app (mobile or desktop) that embeds the SDK |
 | Wallet | Your app's ZEC signing capability — you own it |
-| Pane | `0xramp.app` content loaded in your WebView (or, on mobile, in the system browser — browser-hosted mode) |
+| Pane | `0xramp.app` content loaded in your WebView (or, on mobile, in the system browser — browser-hosted mobile mode; pane support in progress, see section 9) |
 | Session | One ramp attempt; identified by `sessionRef` |
 | Bridge | The message channel between your host and the pane |
 
@@ -33,7 +33,8 @@ flows — those live inside `0xramp.app` and never cross the bridge.
   sends; secure storage scoped to one unlocked wallet; a WebView with
   navigation control (desktop/WebView mode) or your platform's auth-session
   opener (`openAuthSessionAsync`, browser-hosted mobile mode); a return-link
-  scheme you register and route yourself.
+  scheme you register and route yourself (pane-side navigation to it is
+  planned, not yet live — see section 9).
 - **Attribution:** render **"Powered by 0xramp · P2P.me"** at the ramp entry
   point (both examples do).
 - **Package version:** SDK is `0.x` — additive-only until PSP-v1 freezes at
@@ -527,6 +528,23 @@ degradation rung — passkey-first products need it.
 - The WebView recipe (section 5) stays the right shape for desktop (Electron)
   hosts and partners who prefer an embedded pane.
 
+### Pane readiness (current state)
+
+The **deployed pane does not yet implement this mode's browser path**:
+
+- Outside a native WebView, the deposit step shows a disabled action and the
+  message "Open this session inside your partner wallet" — no QR, no copy
+  fallback.
+- Nothing in the pane navigates to your `returnUrl`. The value is validated
+  at session create only, so the browser sheet never closes itself at flow
+  end.
+
+QR/copy without a bridge and end-of-flow `returnUrl` navigation are **planned
+pane-side work** (tracked in the private app repo). Until that ships, a
+partner following this recipe reaches the message above; keep reconciling via
+`getStatus` from your app. The sections below describe the target design and
+the integration shape to build against.
+
 ### The recipe (React Native)
 
 There is **no bridge in this mode** — no postMessage channel exists, so
@@ -544,15 +562,20 @@ const session = await ramp.createSession({
 });
 await sessionVault.save(session);
 
-// 2 — validate the pane URL with the same origin policy, then open the
-//     auth-session browser (host-owned platform API, e.g. expo-web-browser;
-//     confirm the exact call signature against your installed version)
+// 2 — validate the pane URL, register the return-link listener FIRST, then
+//     open the auth-session browser (host-owned platform API, e.g.
+//     expo-web-browser; confirm the exact call signature against your
+//     installed version)
 if (!ramp.isAllowedPaneUrl(session.sessionUrl)) throw new Error("origin refused");
-await openAuthSessionAsync(session.sessionUrl, "mywallet://ramp",
-  { preferEphemeralSession: false });
+const sub = Linking.addEventListener("url", ({ url }) => handleReturn(url));
 
-// 3 — listen for the return link (also after restarts/foregrounding)
-Linking.addEventListener("url", ({ url }) => handleReturn(url));
+// 3 — await the open; consume its result — expo-web-browser resolves it
+//     when the sheet closes, and it may carry your return link
+const result = await openAuthSessionAsync(session.sessionUrl, "mywallet://ramp",
+  { preferEphemeralSession: false });
+if (result.type === "success" && result.url) handleReturn(result.url);
+// keep the listener registered across restarts/foregrounding; remove it
+// only on teardown (sub.remove())
 
 function handleReturn(url: string) {
   // App owns scheme/host routing. Link claims never set the session outcome.
@@ -580,8 +603,10 @@ cannot prove them.
   `createSession` rejects anything else with `ConfigError` before the POST —
   digit-first schemes fail, and so does a value with no scheme prefix at all.
   Accepted values include custom schemes with or without `//`
-  (`mywallet://ramp`, `zingo:ramp?…`) and `https:` URLs (universal/app
-  links).
+  (`mywallet://ramp`, `zingo:ramp`) and `https:` URLs (universal/app links).
+  Register the exact string — the server's return-link allowlist compares the
+  full value exactly: any added query string or fragment is rejected with 403
+  at session create.
 - Register and route the scheme in your own app (Linking config / intent
   filters). `TODO: untested — confirm the exact scheme string your device`
   build registers on iOS and Android; config-time validation can differ from
@@ -595,25 +620,31 @@ cannot prove them.
   across ramps; passkey autofill works.
 - iOS shows its website-data-sharing consent prompt each time the sheet
   opens — expected behavior, not a bug.
-- The sheet closes itself when the pane navigates to your return scheme.
+- The sheet is designed to close itself when the pane navigates to your
+  return scheme; the deployed pane does not yet perform this navigation (see
+  Pane readiness above).
 - `TODO: untested — verify passkey create/assert inside the auth-session`
   browser on real devices, including returning-user login and the consent
   prompt, before rollout.
 
-### Stage 1 — SELL without any bridge
+### Stage 1 — SELL without any bridge (planned)
 
-Browser-hosted SELL is fully functional before any handoff protocol exists:
+Stage 1 describes the intended pane behavior once pane-side support ships.
+It is **not yet available in the deployed pane** (see Pane readiness above):
 
-1. The pane shows the transparent deposit address and the exact amount
+1. The pane will show the transparent deposit address and the exact amount
    (display/QR/copy). The user sends from their wallet — your app is not in
    the signing path at all in this stage.
-2. The pane detects the deposit on-chain and the flow continues.
-3. At flow end the pane navigates to your return scheme; the sheet closes;
-   your app refreshes status from the ticketed status endpoint — the
+2. The pane will detect the deposit on-chain and the flow continues.
+3. At flow end the pane will navigate to your return scheme; the sheet
+   closes; your app refreshes status from the ticketed status endpoint — the
    authoritative receipt for the fiat leg.
 
-BUY lands ZEC on the transparent receiver you registered in the create call;
-your wallet sees it natively. Attribution
+BUY in this mode is not currently available end to end: the Partner API
+serves SELL sessions in this flow, and the pane's browser path does not yet
+complete BUY either. It remains the designed direction: ZEC lands on the
+transparent receiver you registered in the create call, and your wallet sees
+it natively. Attribution
 ("Powered by 0xramp · P2P.me") is required at the ramp entry point in this
 mode too.
 
