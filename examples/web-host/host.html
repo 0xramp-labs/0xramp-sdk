@@ -1,0 +1,234 @@
+<!doctype html>
+<!--
+  0xramp web-host example — popup-mode reference (partner guide §9 shape).
+  Served over loopback HTTP from the repository root. Sandbox mode uses only
+  synthetic data; live mode requires issued 0xramp partner configuration.
+  Powered by 0xramp · P2P.me
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>0xramp web host (popup mode)</title>
+    <script type="importmap">
+      { "imports": { "zod": "../../node_modules/zod/index.js" } }
+    </script>
+    <style>
+      :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+      body { margin: 0; padding: 16px; max-width: 46rem; }
+      header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+      h1 { font-size: 1.1rem; margin: 0; }
+      .badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 999px; background: #f59e0b22; color: #b45309; border: 1px solid #f59e0b55; }
+      .muted { color: gray; font-size: 0.85rem; }
+      fieldset { border: 1px solid currentColor; border-radius: 8px; margin: 12px 0; padding: 10px; }
+      label { display: block; font-size: 0.8rem; margin: 6px 0 2px; }
+      input, select { width: 100%; box-sizing: border-box; font: inherit; padding: 6px; border-radius: 6px; border: 1px solid currentColor; background: transparent; color: inherit; }
+      button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid currentColor; background: transparent; cursor: pointer; margin: 4px 8px 4px 0; }
+      #state { font-weight: 600; margin: 8px 0; min-height: 1.2em; }
+      #log { border: 1px solid currentColor; border-radius: 8px; padding: 10px; font-family: ui-monospace, monospace; font-size: 0.78rem; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 10rem; }
+      .out { color: #047857; } .in { color: #1d4ed8; } .err { color: #b91c1c; }
+      footer { margin-top: 14px; font-size: 0.78rem; color: gray; }
+      .hide { display: none; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>0xramp web host — popup mode</h1>
+      <span class="badge" id="modeBadge">SANDBOX</span>
+    </header>
+    <p class="muted">
+      Bridge-less hosting (partner guide §9): create → popup → return link →
+      authoritative status. No pane bridge exists in this mode; the host is
+      never in the signing path.
+    </p>
+
+    <fieldset>
+      <legend>Configuration</legend>
+      <label for="mode">Mode</label>
+      <select id="mode">
+        <option value="sandbox" selected>Sandbox (synthetic, zero access)</option>
+        <option value="live">Live (issued staging/production config)</option>
+      </select>
+      <div id="liveConfig" class="hide">
+        <label for="environment">Environment</label>
+        <select id="environment">
+          <option value="staging" selected>staging (requires API origin)</option>
+          <option value="production">production</option>
+        </select>
+        <label for="partnerId">Partner ID (issued, public)</label>
+        <input id="partnerId" placeholder="issued-partner-id" autocomplete="off" />
+        <label for="apiBaseUrl">API origin (required for staging)</label>
+        <input id="apiBaseUrl" placeholder="https://staging-api.example" autocomplete="off" />
+        <label for="paneOrigins">Pane origins (comma-separated; optional)</label>
+        <input id="paneOrigins" placeholder="https://pane.example" autocomplete="off" />
+      </div>
+      <label for="returnUrl">returnUrl (must be registered server-side, exact string)</label>
+      <input id="returnUrl" autocomplete="off" />
+    </fieldset>
+
+    <p id="state" aria-live="polite"></p>
+    <button id="btn-start">Start session</button>
+    <button id="btn-resume">Resume / open popup</button>
+    <button id="btn-status">Check status</button>
+    <button id="btn-simulate-return">Simulate return link</button>
+    <button id="btn-reset">Reset demo storage</button>
+
+    <div id="log" aria-live="polite"></div>
+    <footer>
+      Powered by 0xramp · P2P.me — sandbox data is synthetic; never ship this
+      page to production. Real hosts keep the statusTicket server-side (bearer
+      data) and add bounded status polling where the product needs it.
+    </footer>
+
+    <script type="module">
+      import { createRampClient, parseReturnUrl } from "../../dist/index.js";
+      import { createWebPartnerHost } from "./host.js";
+
+      "use strict";
+      const $ = (id) => document.getElementById(id);
+      const logEl = $("log");
+      function log(kind, text) {
+        const line = document.createElement("div");
+        line.className = kind;
+        line.textContent = text;
+        logEl.appendChild(line);
+        while (logEl.childElementCount > 200) logEl.firstChild.remove();
+      }
+
+      const STORAGE_KEY = "0xramp.web-host.demo";
+      const storage = {
+        async read() { return localStorage.getItem(STORAGE_KEY); },
+        async write(value) {
+          if (value === null) localStorage.removeItem(STORAGE_KEY);
+          else localStorage.setItem(STORAGE_KEY, value);
+        },
+      };
+
+      $("returnUrl").value = `${location.origin}${location.pathname}?0xramp-return=1`;
+
+      let host = null;
+      let popup = null;
+      setInterval(() => {
+        if (popup && popup.closed) { popup = null; host?.onPopupClosed(); }
+      }, 1000);
+
+      $("mode").addEventListener("change", () => {
+        const live = $("mode").value === "live";
+        $("liveConfig").classList.toggle("hide", !live);
+        $("modeBadge").textContent = live ? "LIVE" : "SANDBOX";
+      });
+
+      function openPane(url) {
+        popup = window.open(url, "0xramp", "popup,width=420,height=720");
+        if (popup === null) log("err", "Popup blocked — allow popups for this origin, then Resume.");
+        return popup ? { close: () => { try { popup.close(); } catch {} } } : null;
+      }
+      function ownsReturnUrl(url) {
+        try { return new URL(url).searchParams.has("0xramp-return"); } catch { return false; }
+      }
+      function onState(state) {
+        $("state").textContent = state.message;
+      }
+
+      function sandboxClient() {
+        const session = {
+          sessionUrl: new URL("../sandbox/sandbox-pane.html?sessionRef=sessWEBDEMO000001", location.href).toString(),
+          sessionRef: "sessWEBDEMO000001",
+          statusTicket: "sandbox-ticket-not-real",
+          expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+        };
+        const paneOrigin = new URL(session.sessionUrl).origin;
+        let statusCalls = 0;
+        const outcomes = ["created", "user-active", "settled"];
+        return {
+          createSession: async () => {
+            await new Promise((r) => setTimeout(r, 400));
+            return session;
+          },
+          restoreSession: (s) => s,
+          isAllowedPaneUrl: (url) => { try { return new URL(url).origin === paneOrigin; } catch { return false; } },
+          getStatus: async () => {
+            const outcome = outcomes[Math.min(statusCalls++, outcomes.length - 1)];
+            return { outcome, terminal: outcome === "settled", updatedAt: new Date().toISOString() };
+          },
+          attachPaneBridge: () => { throw new Error("no bridge in popup mode"); },
+          parseReturnUrl,
+        };
+      }
+
+      function liveClient() {
+        const environment = $("environment").value;
+        const apiBaseUrl = $("apiBaseUrl").value.trim();
+        if (environment === "staging" && apiBaseUrl === "") throw new Error("staging requires an API origin");
+        const paneOrigins = $("paneOrigins").value.split(",").map((s) => s.trim()).filter(Boolean);
+        return createRampClient({
+          environment,
+          partnerId: $("partnerId").value.trim(),
+          ...(apiBaseUrl !== "" ? { apiBaseUrl } : {}),
+          ...(paneOrigins.length > 0 ? { paneOrigins } : {}),
+        });
+      }
+
+      function buildHost() {
+        const mode = $("mode").value;
+        const client = mode === "sandbox" ? sandboxClient() : liveClient();
+        return createWebPartnerHost({
+          client,
+          storage,
+          openPane,
+          ownsReturnUrl,
+          onState,
+        });
+      }
+
+      $("btn-start").addEventListener("click", () => {
+        try {
+          host = buildHost();
+          void host.initialize().then(() =>
+            host.start({
+              direction: "sell",
+              asset: "ZEC",
+              fiat: "BRL",
+              returnUrl: $("returnUrl").value.trim(),
+              partnerSessionId: `web-demo-${Date.now()}`,
+            }),
+          );
+          log("out", "start() — creating intent persisted before the POST");
+        } catch (error) { log("err", String(error)); }
+      });
+      $("btn-resume").addEventListener("click", () => {
+        host ??= buildHost();
+        void host.initialize().then(() => host.resume());
+      });
+      $("btn-status").addEventListener("click", () => {
+        host ??= buildHost();
+        void host.initialize().then(() => host.refreshStatus());
+      });
+      $("btn-simulate-return").addEventListener("click", () => {
+        if (!host) return;
+        const sessionRef = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")?.session?.sessionRef;
+        if (sessionRef === undefined) { log("err", "No active sandbox session to return from."); return; }
+        const url = `${location.origin}${location.pathname}?0xramp-return=1&sessionRef=${encodeURIComponent(sessionRef)}&outcome=settled`;
+        log("in", `return link (advisory): ${url}`);
+        host.handleReturn(url);
+      });
+      $("btn-reset").addEventListener("click", async () => {
+        host?.dispose();
+        host = null; popup = null;
+        await storage.write(null);
+        $("state").textContent = "";
+        log("out", "Demo storage cleared.");
+      });
+
+      // Return navigation lands on this page: ?0xramp-return=1&sessionRef=…&outcome=…
+      void (async () => {
+        if (!ownsReturnUrl(location.href)) return;
+        log("in", `return navigation: ${location.href}`);
+        host = buildHost();
+        await host.initialize();
+        host.handleReturn(location.href);
+        history.replaceState(null, "", location.pathname);
+      })();
+    </script>
+  </body>
+</html>

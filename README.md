@@ -124,7 +124,7 @@ Signs or moves funds · holds keys or custody · stores or transits payout keys 
 | `src/` | `protocol/` (PSP-v1 types + validation) · `session/` (client) · `bridge/` (host-side bridge, origin lock) · `units/` (integer money math) |
 | `fixtures/` | PSP-v1 golden wire vectors (conformance set — both sides of the bridge validate against these) |
 | `sandbox/` | `sandbox-pane.html` — pane half of PSP-v1 against canned responses; develop hosts with zero 0xramp access |
-| `examples/` | Minimal Electron and React Native hosts |
+| `examples/` | Minimal Electron, React Native, and web (popup-mode) hosts |
 
 ## Development
 

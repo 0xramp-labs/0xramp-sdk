@@ -8,6 +8,13 @@ All notable changes to this project are documented here. Format based on
 
 ### Added
 
+- Web host example (`examples/web-host/`): a zero-install browser reference
+  for the bridge-less **popup hosting mode** (create → open popup → advisory
+  return link → ticketed status), mirroring the React Native host controller
+  and covered by the opt-in partner test suite. Sandbox mode is fully
+  synthetic; live mode requires issued partner configuration and never falls
+  back to fake success. Serves as the reference integration shape for web
+  partners; see the partner guide §9.
 - Browser-hosted pane support for mobile hosts: the pane can open in the
   system browser (an OS auth-session, e.g. `openAuthSessionAsync`) — a
   supported hosting mode required for passkey-first products, which WebViews

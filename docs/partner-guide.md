@@ -543,7 +543,10 @@ degradation rung — passkey-first products need it.
 - In browser mode the OS browser itself displays the `0xramp.app` origin,
   which satisfies the origin-visibility invariant by construction.
 - The WebView recipe (section 5) stays the right shape for desktop (Electron)
-  hosts and partners who prefer an embedded pane.
+  hosts and partners who prefer an embedded pane. Desktop **web** hosts use
+  the same bridge-less popup shape as this section — see
+  `examples/web-host/` for a runnable reference (create → popup → return
+  link → authoritative status).
 
 ### Pane readiness (current state)
 
