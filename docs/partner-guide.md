@@ -29,6 +29,13 @@ flows — those live inside `0xramp.app` and never cross the bridge.
   `git clone` then `"@0xramp/sdk": "file:<path-to-repo>"` (see README).
 - **Issued by 0xramp during onboarding:** a `partnerId`, at least one enabled
   corridor (e.g. `BRL`), the API origin, and the exact pane origin(s).
+- **What onboarding issues — and never issues:** the `partnerId` is a public
+  identifier, not a credential. Partners receive no secret API key:
+  authorization is the server-side allowlist (partner ID + enabled corridor +
+  exact registered `returnUrl` + browser `Origin` where one is sent), and
+  session reads are gated by the per-session `statusTicket` issued at create.
+  Native clients send no `Origin` header. If a flow asks you for a partner
+  API key, that is a misunderstanding of this model.
 - **Your app must provide:** a ZEC wallet core that signs transparent-address
   sends; secure storage scoped to one unlocked wallet; a WebView with
   navigation control (desktop/WebView mode) or your platform's auth-session
@@ -209,15 +216,23 @@ interface RampSession {
 persisted intent and reconcile with 0xramp before another create.
 `partnerSessionId` is public correlation data and cannot recover anything.
 
-**Optional — idempotent creation.** Only if your deployment explicitly
-supports it: generate 32 random bytes, base64url-encode them (43 chars), and
-persist `idempotencyKey` together with the **complete** create input before
-sending. The SDK sends it as the `idempotency-key` HTTP header and never retries.
-An explicit recovery must reuse the identical key and body.
-`TODO: untested — the 409 behavior for a reused key with a changed body is`
-stated here but not documented in SPEC.md; confirm the contract with 0xramp
-before relying on it. Do not assume the header adds any guarantee to an older
-server. The RN example stays conservative and reconciles manually.
+**Optional — idempotent creation.** On deployments that support it (the
+0xramp-issued Partner API does): generate 32 random bytes, base64url-encode
+them (43 chars), and persist `idempotencyKey` together with the **complete**
+create input before sending. The SDK sends it as the `idempotency-key` HTTP
+header and never retries. An explicit recovery must reuse the identical key
+and body. Deployment contract (as implemented by the issued staging Partner
+API; confirm with 0xramp for custom deployments, and do not assume the header
+adds any guarantee to an older server):
+
+- Same key + identical body → the **identical session** is returned (HTTP 200
+  recovery, no new create, no quota consumed) — this is the supported
+  lost-create-response reconciliation path, across replicas and restarts.
+- Same key + **changed** body → `409 idempotency_conflict`; resolve with 0xramp
+  before retrying anything.
+- Recovery records are never recycled or overwritten.
+
+The RN example stays conservative and reconciles manually.
 
 ### Step 2 — Attach the pane bridge (before loading the WebView)
 
@@ -296,10 +311,12 @@ Then enforce the same policy on **every** navigation, redirect, and popup:
 - Use `ramp.isAllowedPaneUrl(url)` for the initial source **and every
   navigation**. Reject non-top-frame loads; refuse popups (`setWindowOpenHandler`
   deny / `setSupportMultipleWindows` with a no-op handler).
-  `TODO: untested — initial WebView loads can bypass onShouldStartLoadWithRequest;`
-  verify the exact platform behavior (iOS vs Android) on real devices.
-  (CHANGELOG.md says the guide documents an iOS initial-load gap; this section
-  currently attributes it to Android — reconcile during device testing.)
+  `TODO: untested — on iOS, initial WebView loads can bypass`
+  `onShouldStartLoadWithRequest` (CHANGELOG 0.0.1 recorded the iOS gap); verify
+  the exact callback behavior on both platforms on real devices. The gap cannot
+  load an off-origin pane: `createSession`/`restoreSession` already refuse any
+  `sessionUrl` outside the configured pane origins, so the callback is defense
+  in depth for every subsequent navigation, not the initial-load lock.
 - Bridge messages alone never authenticate an origin; keep the navigation
   invariant and validate the sender URL on every `onMessage`.
 - Display the pane **origin**, never the full ticket-bearing URL.

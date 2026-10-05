@@ -56,7 +56,7 @@ const sendStore = createZecSendStore({
 
 const ramp = createRampClient({
   environment: "production",
-  partnerId: "<issued-by-0xramp>", // onboarding via 0xramp
+  partnerId: "<issued-by-0xramp>", // public id — no secret API key is issued
   sendStore,
 });
 
