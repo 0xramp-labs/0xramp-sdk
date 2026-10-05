@@ -224,10 +224,12 @@
       void (async () => {
         if (!ownsReturnUrl(location.href)) return;
         log("in", `return navigation: ${location.href}`);
-        host = buildHost();
-        await host.initialize();
-        host.handleReturn(location.href);
-        history.replaceState(null, "", location.pathname);
+        try {
+          host = buildHost();
+          await host.initialize();
+          host.handleReturn(location.href);
+          history.replaceState(null, "", location.pathname);
+        } catch (error) { log("err", String(error)); }
       })();
     </script>
   </body>
