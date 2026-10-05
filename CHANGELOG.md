@@ -52,6 +52,12 @@ All notable changes to this project are documented here. Format based on
   changed body → `409 idempotency_conflict`, no quota consumption), and the
   onboarding section now states explicitly that partners receive a public
   partner ID + origins — never a secret API key.
+- Partner-readiness refresh: documents the verified staging Partner API state
+  (pane at PSP-v1 fixture parity, request-ID stability), the idempotent
+  lost-create reconciliation path (200 identical-session recovery, 409 on a
+  changed body, 90-day ticketed support window), and the pilot money
+  parameters (SELL ZEC → BRL only, mainnet-small drills, $5 Pix payout
+  minimum, $5.30 session floor with a 6% safety margin).
 - `createSession` now rejects a `returnUrl` whose scheme is not letter-first
   per RFC 3986 with `ConfigError` before any POST — digit-first schemes and
   values without a scheme prefix fail closed; `https:` URLs and schemes

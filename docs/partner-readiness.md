@@ -1,9 +1,13 @@
 # Partner pilot readiness
 
 This revision is intended for **partner development and simulated integration**.
-It does not establish live API availability, Zingo device compatibility, funds
-movement or successful fiat settlement. Keep the package's production warning
-until the checks below have evidence.
+It reflects the 0xramp-issued staging Partner API as of October 2026: the
+staging pane passes the shared PSP-v1 fixtures (including pending and
+multi-transaction results) and preserves request IDs across reconnects. This
+document still does not establish live API availability, Zingo device
+compatibility, funds movement or successful fiat settlement — confirm with
+0xramp which deployment you are integrating against. Keep the package's
+production warning until the checks below have evidence.
 
 ## Recommended first pilot
 
@@ -38,6 +42,16 @@ install or launch Expo, React Native or Electron.
 | Exact custom origins, invalid ready binding, restored tickets, network deadlines | SDK unit tests |
 | Advisory settlement/deep-link claims trigger ticketed status lookup | Mocked authoritative API |
 
+## Pilot money parameters
+
+- Corridor: **SELL ZEC → BRL** only. BUY fails closed server-side and is not
+  a pilot surface.
+- Drills run **mainnet-small**: real value, operator-approved amounts.
+- The Pix payout side requires a minimum **$5 USD** payout; with a 6% safety
+  margin for conversion and P2P friction, every pilot session starts from at
+  least **$5.30** USD-equivalent ZEC value.
+- Drill coverage: settle, fail, expiry/late deposit, interrupted return.
+
 ## Required before enabling a live wallet adapter
 
 - [ ] 0xramp issues the partner ID, exact API/pane origins and enabled corridor.
@@ -46,8 +60,14 @@ install or launch Expo, React Native or Electron.
   OPTIONS response or local mock is insufficient.
 - [ ] The deployed pane passes the shared PSP-v1 fixtures, including pending
   and multi-transaction results, and preserves request IDs across reconnects.
-- [ ] Lost create responses have a server-supported reconciliation procedure;
-  `partnerSessionId` alone is not an idempotency guarantee.
+  The current staging pane does; partners confirm the deployment they target.
+- [ ] Lost create responses have a server-supported reconciliation procedure:
+  on idempotency-enabled deployments (the issued staging Partner API is one),
+  the persisted `idempotencyKey` with the identical body returns the identical
+  session (no quota consumed) and a changed body fails with
+  `409 idempotency_conflict`. `partnerSessionId` alone is not an idempotency
+  guarantee; unresolved creates are reconciled with 0xramp support (ticketed
+  status remains readable for 90 days).
 - [ ] Native adapter shows amount, destination and network fee, uses integer
   units, checks spendable balance, respects cancellation before signing and
   associates persisted requests with wallet history.
