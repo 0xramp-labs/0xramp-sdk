@@ -57,8 +57,10 @@ All notable changes to this project are documented here. Format based on
   (pane at PSP-v1 fixture parity, request-ID stability), the idempotent
   lost-create reconciliation path (200 identical-session recovery, 409 on a
   changed body, 90-day ticketed support window), and the pilot money
-  parameters (SELL ZEC → BRL only, mainnet-small drills, $5 Pix payout
-  minimum, $5.30 session floor with a 6% safety margin).
+  parameters (SELL ZEC → BRL only, mainnet-small drills; drill amounts from
+  $5.30 USD-equivalent as operational guidance — the existing
+  server-authoritative 0xramp financial rules stay the source of truth, with
+  no partner-specific floor or cap).
 - `createSession` now rejects a `returnUrl` whose scheme is not letter-first
   per RFC 3986 with `ConfigError` before any POST — digit-first schemes and
   values without a scheme prefix fail closed; `https:` URLs and schemes

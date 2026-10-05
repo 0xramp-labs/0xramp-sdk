@@ -47,9 +47,14 @@ install or launch Expo, React Native or Electron.
 - Corridor: **SELL ZEC → BRL** only. BUY fails closed server-side and is not
   a pilot surface.
 - Drills run **mainnet-small**: real value, operator-approved amounts.
-- The Pix payout side requires a minimum **$5 USD** payout; with a 6% safety
-  margin for conversion and P2P friction, every pilot session starts from at
-  least **$5.30** USD-equivalent ZEC value.
+- **Money rules:** no partner-specific monetary policy exists or is planned —
+  the existing 0xramp financial rules stay the source of truth for every
+  pilot session (server-side account limits, plus the quote and
+  minimum-order checks inside the pane).
+- **Drill sizing guidance:** the Pix payout side requires a minimum **$5 USD**
+  payout, so 0xramp runs pilot drills from at least **$5.30** USD-equivalent
+  ZEC value (≈6% margin for conversion and P2P friction). This is operational
+  guidance for choosing drill amounts — not a server-enforced floor.
 - Drill coverage: settle, fail, expiry/late deposit, interrupted return.
 
 ## Required before enabling a live wallet adapter
