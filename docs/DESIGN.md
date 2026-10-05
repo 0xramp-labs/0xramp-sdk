@@ -26,7 +26,7 @@ Partner wallet app                0xramp.app (pane, in WebView)          0xramp 
 
 ### Hosting modes
 
-The WebView recipe above is the default for desktop hosts. On mobile, the pane may instead be opened in the **system browser** (an OS auth-session, e.g. `openAuthSessionAsync`) — a **supported hosting mode** required for passkey-first products: Android WebView has no WebAuthn support, iOS WKWebView would need a `webcredentials` association file for `0xramp.app` that 0xramp does not serve, and web sessions do not cross WebView ↔ browser contexts. Browser-hosted mode has no bridge channel (no postMessage): the pane drives the flow on-page, the host resumes via its registered return deep link, and the ticketed status endpoint stays authoritative. The OS browser displaying the `0xramp.app` origin satisfies origin visibility by construction.
+The WebView recipe above is the default for desktop hosts. On mobile, the pane may instead be opened in the **system browser** (an OS auth-session, e.g. `openAuthSessionAsync`); desktop **web** hosts open it as a top-level popup (`window.open`) — **supported hosting modes** required for passkey-first products: Android WebView has no WebAuthn support, iOS WKWebView would need a `webcredentials` association file for `0xramp.app` that 0xramp does not serve, and web sessions do not cross WebView ↔ browser contexts. Browser-hosted mode has no bridge channel (no postMessage): the pane drives the flow on-page, the host resumes via its registered return deep link, and the ticketed status endpoint stays authoritative. The browser chrome displaying the `0xramp.app` origin (OS browser on mobile, popup window on desktop) satisfies origin visibility by construction.
 
 ### Deep-link handoff trust model
 

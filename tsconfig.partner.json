@@ -1,6 +1,17 @@
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": { "module": "ESNext", "moduleResolution": "Bundler", "paths": { "@0xramp/sdk": ["./src/index.ts"] } },
-  "include": ["src", "examples/react-native-host/host.ts", "examples/react-native-host/host.test.ts"],
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowJs": true,
+    "paths": { "@0xramp/sdk": ["./src/index.ts"] }
+  },
+  "include": [
+    "src",
+    "examples/react-native-host/host.ts",
+    "examples/react-native-host/host.test.ts",
+    "examples/web-host/host.js",
+    "examples/web-host/host.test.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

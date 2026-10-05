@@ -8,13 +8,21 @@ All notable changes to this project are documented here. Format based on
 
 ### Added
 
+- Web host example (`examples/web-host/`): a zero-install browser reference
+  for the bridge-less **popup hosting mode** (create → open popup → advisory
+  return link → ticketed status), mirroring the React Native host controller
+  and covered by the opt-in partner test suite. Sandbox mode is fully
+  synthetic; live mode requires issued partner configuration and never falls
+  back to fake success. Serves as the reference integration shape for web
+  partners; see the partner guide §9.
 - Browser-hosted pane support for mobile hosts: the pane can open in the
   system browser (an OS auth-session, e.g. `openAuthSessionAsync`) — a
   supported hosting mode required for passkey-first products, which WebViews
   cannot serve (no WebAuthn on Android WebView; iOS WKWebView would need a
   `webcredentials` association file 0xramp does not serve). The partner guide
-  gains a "Mobile: browser-hosted pane" recipe (create → open → return link →
-  authoritative status, stage-1 SELL without any bridge) — **planned
+  gains a "Browser-hosted pane (mobile and web hosts)" recipe (create → open
+  → return link → authoritative status, stage-1 SELL without any bridge) —
+  **planned
   pane-side work, not yet live in the deployed pane** (no QR/copy outside a
   native WebView; no return-link navigation yet; the guide marks the current
   state); DESIGN and SPEC name the hosting modes.
@@ -37,6 +45,20 @@ All notable changes to this project are documented here. Format based on
 
 ### Changed
 
+- Partner guide corrections: the iOS initial-load attribution is fixed
+  (CHANGELOG 0.0.1 recorded the iOS gap; the guide wrongly attributed it to
+  Android — the create/restore origin lock already covers the initial load),
+  the `idempotency-key` deployment contract is documented as verified against
+  the issued staging Partner API (identical key + body → identical session,
+  changed body → `409 idempotency_conflict`, no quota consumption), and the
+  onboarding section now states explicitly that partners receive a public
+  partner ID + origins — never a secret API key.
+- Partner-readiness refresh: documents the verified staging Partner API state
+  (pane at PSP-v1 fixture parity, request-ID stability), the idempotent
+  lost-create reconciliation path (200 identical-session recovery, 409 on a
+  changed body, 90-day ticketed support window), and the pilot money
+  parameters (SELL ZEC → BRL only, mainnet-small drills, $5 Pix payout
+  minimum, $5.30 session floor with a 6% safety margin).
 - `createSession` now rejects a `returnUrl` whose scheme is not letter-first
   per RFC 3986 with `ConfigError` before any POST — digit-first schemes and
   values without a scheme prefix fail closed; `https:` URLs and schemes

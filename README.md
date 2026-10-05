@@ -24,7 +24,7 @@ Your wallet app                 0xramp.app (pane, in WebView)        0xramp host
 - **SELL (ZEC → fiat):** the pane reserves a NEAR Intents deposit route and asks your app to send the exact ZEC amount to a transparent deposit address. Your wallet signs that send — **the only signature you ever make**.
 - **BUY (fiat → ZEC):** the user pays a merchant on the fiat rail from their bank app; ZEC lands on the transparent address you provided.
 - Bridge results are **advisory**; authoritative state is the ticketed status endpoint plus your own view of the Zcash chain.
-- **Mobile:** the pane can also open in the **system browser** (browser-hosted mode) — required for passkey-first products, which WebViews cannot serve. See [Mobile: browser-hosted pane](docs/partner-guide.md#9-mobile-browser-hosted-pane).
+- **Mobile:** the pane can also open in the **system browser** (browser-hosted mode) — required for passkey-first products, which WebViews cannot serve. See [Browser-hosted pane (mobile and web hosts)](docs/partner-guide.md#9-browser-hosted-pane-mobile-and-web-hosts).
 
 Details: [`docs/DESIGN.md`](docs/DESIGN.md) · full surface: [`docs/SPEC.md`](docs/SPEC.md).
 
@@ -56,7 +56,7 @@ const sendStore = createZecSendStore({
 
 const ramp = createRampClient({
   environment: "production",
-  partnerId: "<issued-by-0xramp>", // onboarding via 0xramp
+  partnerId: "<issued-by-0xramp>", // public id — no secret API key is issued
   sendStore,
 });
 
@@ -97,7 +97,7 @@ On mobile the design target is to skip the WebView: open
 `session.sessionUrl` in the system browser (browser-hosted mode, no bridge)
 and resume via your return scheme. The deployed pane does not yet implement
 this path (no QR/copy outside a WebView; no returnUrl navigation) — see
-[Mobile: browser-hosted pane](docs/partner-guide.md#9-mobile-browser-hosted-pane)
+[Browser-hosted pane (mobile and web hosts)](docs/partner-guide.md#9-browser-hosted-pane-mobile-and-web-hosts)
 for the current state.
 
 `myWallet`, storage and UI methods above are partner-owned ports. An approved
@@ -120,11 +120,11 @@ Signs or moves funds · holds keys or custody · stores or transits payout keys 
 
 | Path | Contents |
 |---|---|
-| `docs/` | [`SPEC.md`](docs/SPEC.md) (public surface), [`DESIGN.md`](docs/DESIGN.md) (architecture), [partner guide](docs/partner-guide.md) (RN + Electron recipes, browser-hosted mobile) |
+| `docs/` | [`SPEC.md`](docs/SPEC.md) (public surface), [`DESIGN.md`](docs/DESIGN.md) (architecture), [partner guide](docs/partner-guide.md) (RN + Electron recipes, browser-hosted mode for mobile and web) |
 | `src/` | `protocol/` (PSP-v1 types + validation) · `session/` (client) · `bridge/` (host-side bridge, origin lock) · `units/` (integer money math) |
 | `fixtures/` | PSP-v1 golden wire vectors (conformance set — both sides of the bridge validate against these) |
 | `sandbox/` | `sandbox-pane.html` — pane half of PSP-v1 against canned responses; develop hosts with zero 0xramp access |
-| `examples/` | Minimal Electron and React Native hosts |
+| `examples/` | Minimal Electron, React Native, and web (popup-mode) hosts |
 
 ## Development
 

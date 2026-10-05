@@ -6,7 +6,7 @@
 
 A TypeScript SDK for wallet apps that want to offer 0xramp ZEC ↔ local-fiat ramps (Pix, UPI, …) by hosting **`0xramp.app`** in an embedded WebView or in the system browser (origin visible either way). The wallet signs **only** Zcash sends from its own wallet core. Everything else — identity (passkeys), the Base account, P2P.me orders, quotes, limits, fraud screening, fiat payout — runs inside `0xramp.app`, unchanged.
 
-**Hosting modes.** Desktop hosts embed the pane in a WebView with the postMessage bridge. Mobile hosts (passkey-first products) open the pane in the system browser (auth-session, e.g. `openAuthSessionAsync`) — a supported hosting mode with no bridge channel: the pane drives the flow on-page and the host resumes via its registered return deep link (return-link navigation is planned pane-side work; not yet live in the deployed pane — see the partner guide); the ticketed status endpoint stays authoritative. See the partner guide's "Mobile: browser-hosted pane" section.
+**Hosting modes.** Desktop hosts embed the pane in a WebView with the postMessage bridge. Mobile hosts (passkey-first products) open the pane in the system browser (auth-session, e.g. `openAuthSessionAsync`); desktop web hosts open it as a top-level popup (`window.open`) — both bridge-less hosting modes: the pane drives the flow on-page and the host resumes via its registered return deep link (return-link navigation is planned pane-side work; not yet live in the deployed pane — see the partner guide); the ticketed status endpoint stays authoritative. See the partner guide's "Browser-hosted pane (mobile and web hosts)" section.
 
 **Attribution:** integrations must display **"Powered by 0xramp · P2P.me"** at the ramp entry point.
 
@@ -128,7 +128,7 @@ Rules enforced by the SDK bridge:
 ## Draft surface (unfrozen): browser-hosted handoff
 
 **Draft — pending partner confirmation; the encoding may change.** For the
-browser-hosted mobile mode, the SDK ships a draft deep-link handoff codec
+browser-hosted mode, the SDK ships a draft deep-link handoff codec
 (root and `@0xramp/sdk/session`: `parseZecSendHandoffUrl`,
 `buildZecSendResumeUrl`):
 
