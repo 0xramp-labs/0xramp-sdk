@@ -20,8 +20,9 @@ All notable changes to this project are documented here. Format based on
   supported hosting mode required for passkey-first products, which WebViews
   cannot serve (no WebAuthn on Android WebView; iOS WKWebView would need a
   `webcredentials` association file 0xramp does not serve). The partner guide
-  gains a "Mobile: browser-hosted pane" recipe (create → open → return link →
-  authoritative status, stage-1 SELL without any bridge) — **planned
+  gains a "Browser-hosted pane (mobile and web hosts)" recipe (create → open
+  → return link → authoritative status, stage-1 SELL without any bridge) —
+  **planned
   pane-side work, not yet live in the deployed pane** (no QR/copy outside a
   native WebView; no return-link navigation yet; the guide marks the current
   state); DESIGN and SPEC name the hosting modes.
