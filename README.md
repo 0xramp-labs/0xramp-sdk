@@ -31,7 +31,8 @@ Details: [`docs/DESIGN.md`](docs/DESIGN.md) · full surface: [`docs/SPEC.md`](do
 ## Install
 
 > [!NOTE]
-> **Not published to npm yet** (v0 pilot) — install from the repository until the first tagged release:
+> **Not published to npm** (v0 pilot) — install from the repository (tagged
+> releases are on GitHub):
 
 ```bash
 git clone https://github.com/0xramp-labs/0xramp-sdk.git
