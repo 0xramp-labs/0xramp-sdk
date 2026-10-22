@@ -1,6 +1,6 @@
 {
   "name": "@0xramp/sdk",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "TypeScript SDK for wallet apps that host 0xramp.app in a WebView to offer ZEC ↔ fiat ramps (Pix, UPI, …). The wallet signs only ZEC sends; everything else runs inside 0xramp.app. Powered by P2P.me.",
   "type": "module",
   "license": "MIT",
@@ -25,7 +25,7 @@
   ],
   "sideEffects": false,
   "engines": {
-    "node": ">=20"
+    "node": ">=22.23.4"
   },
   "exports": {
     ".": {
@@ -73,6 +73,6 @@
   "devDependencies": {
     "@types/node": "22.20.4",
     "typescript": "5.9.3",
-    "vitest": "5.0.1"
+    "vitest": "5.0.5"
   }
 }

@@ -76,6 +76,43 @@ All notable changes to this project are documented here. Format based on
   scheme-without-`//` links (e.g. `zingo:ramp?…#f`): the fragment is ignored,
   matching the URL standard.
 
+## [0.0.3] — 2026-10-22 (security floor)
+
+### Security
+
+- **Node.js runtime floor raised to a patched line:** `engines.node` is now
+  `>=22.23.4` (was `>=20`). Node 20 is end-of-life since 2026-04-30 and receives
+  no security fixes. 22.23.4 is one of the Node.js October 2026 security-release
+  lines (22.23.4 / 24.22.1 / 26.12.1), which fix the high-severity Brotli
+  decoder out-of-bounds write (CVE-2026-111497), TLS hostname-verification
+  bypasses (CVE-2026-105483, CVE-2026-106069), DNS `resolve` truncation
+  (CVE-2026-105482) and more, and refresh the embedded CA store for the eMudhra
+  intermediate-CA compromise. Hosts on 24.x should run `>=24.22.1`. The SDK core
+  contains no network client of its own (no fetch/undici surface in `src/`), so
+  this is a runtime-floor change for hosts and CI, not an SDK code fix:
+  the patched runtime matters wherever the SDK runs inside an app that does
+  talk to the network.
+- **CI now runs on patched lines only:** matrix moved from Node 20/22 to
+  22/24, the publish dry-run and the release workflow pin `24.22.1` exactly,
+  and a new `.nvmrc` pins local development to `24.22.1`.
+- **Dev-only dependency fixes** (not shipped in the published package):
+  vitest 5.0.1 → 5.0.5, resolving the @vitest/mocker advisories
+  (GHSA-qxg6-89mg-rqv8 unauthenticated mock registration code injection,
+  GHSA-xp26-3454-mjgp Windows backslash traversal), the source-map-js
+  event-loop DoS (GHSA-68fv-2mgg-jv7q) and the vite 8.3.x advisory set
+  (launch-editor argument injection GHSA-698v-4r3x-3vcv /
+  GHSA-r825-w8mm-5pxw / GHSA-587h-7wmj-h5pm; cross-origin middleware
+  GHSA-9jrq-w75r-8gcw; fs-bypass GHSA-rq7h-c2jc-7f22;
+  `?vite-wasm-instance` leak GHSA-vfpm-58rq-9qcg). Lockfile now resolves
+  vitest 5.0.5 / vite 8.3.5 / source-map-js 1.2.2, and `npm audit` is clean
+  including devDependencies.
+
+### Changed
+
+- Electron example pins `electron` to `45.0.0` (was `^33.0.0`): Electron 33
+  bundles a Node 20.x runtime, which is EOL and carries a stale CA store. The
+  example stays opt-in and is not installed or run by SDK CI.
+
 ## [0.0.2] — 2026-09-22 (partner integration hardening)
 
 ### Fixed
@@ -202,3 +239,4 @@ All notable changes to this project are documented here. Format based on
 
 [0.0.1]: https://github.com/0xramp-labs/0xramp-sdk/releases/tag/v0.0.1
 [0.0.2]: https://github.com/0xramp-labs/0xramp-sdk/compare/v0.0.1...v0.0.2
+[0.0.3]: https://github.com/0xramp-labs/0xramp-sdk/compare/v0.0.2...v0.0.3

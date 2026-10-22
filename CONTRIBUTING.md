@@ -27,7 +27,7 @@ npm run build     # tsc → dist/ (ESM + .d.ts)
 npm run audit     # runtime dependency audit
 ```
 
-CI runs typecheck + tests + audit + publish dry-run on Node 20 and 22; a PR
+CI runs typecheck + tests + audit + publish dry-run on Node 22 and 24; a PR
 is green only when all pass.
 
 ## Conventions

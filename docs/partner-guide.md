@@ -24,8 +24,9 @@ flows — those live inside `0xramp.app` and never cross the bridge.
 
 ## 1. Prerequisites
 
-- **Node >= 20**; the SDK is pure ESM and strictly typed TypeScript.
-- **SDK v0.0.2** (`@0xramp/sdk`). Not on npm yet — install from the repo:
+- **Node >= 22.23.4** (a Node.js October 2026 security-release line — 22.23.4
+  / 24.22.1 / 26.12.1); the SDK is pure ESM and strictly typed TypeScript.
+- **SDK v0.0.3** (`@0xramp/sdk`). Not on npm yet — install from the repo:
   `git clone` then `"@0xramp/sdk": "file:<path-to-repo>"` (see README).
 - **Issued by 0xramp during onboarding:** a `partnerId`, at least one enabled
   corridor (e.g. `BRL`), the API origin, and the exact pane origin(s).
