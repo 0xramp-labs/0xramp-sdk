@@ -46,7 +46,7 @@ rejected regardless of code quality.
 
 ## 3. Engineering conventions
 
-- Strict `tsc --noEmit` is the static gate; CI runs it on Node 20 and 22.
+- Strict `tsc --noEmit` is the static gate; CI runs it on Node 22 and 24.
 - Tests are colocated (`*.test.ts` next to sources) and run with vitest.
 - Fixtures-first: wire-format changes land as `fixtures/psp-v1/` vectors +
   schema changes in the same PR. The fixture suite is the conformance
