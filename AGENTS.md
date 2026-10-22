@@ -68,7 +68,9 @@ rejected regardless of code quality.
   (additive-only afterward — new messages, new optional fields). Breaking
   changes mean a new envelope version (`psp/v2`), not mutations of v1.
 - Release gate: version-bump PR + dated `CHANGELOG.md` entry + green CI +
-  `npm publish --dry-run` clean, then publish with provenance from the tag.
+  `npm publish --dry-run` clean. The tag workflow verifies the release;
+  npm publication is deferred (`@0xramp/sdk` is not on npm — partners
+  install from the repository, README § Install).
 
 ## 5. Out of scope for v0 (do not build here)
 

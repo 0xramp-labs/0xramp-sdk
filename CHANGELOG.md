@@ -69,6 +69,12 @@ All notable changes to this project are documented here. Format based on
   value exactly — a query string or fragment makes session create fail with
   403. Enforced client-side: the wire schema and golden fixtures are
   unchanged.
+- Release workflow no longer publishes to npm: `@0xramp/sdk` is not on npm
+  (partners install from the repository), so a tag push now runs the release
+  gate only — tag ↔ version ↔ dated CHANGELOG check, typecheck, tests, build
+  and a publish dry-run, with no registry write and no npm token configured.
+  Publishing (with provenance) is re-introduced when the package is
+  registered on npm.
 
 ### Fixed
 

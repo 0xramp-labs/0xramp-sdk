@@ -1,7 +1,18 @@
 name: Release
 
-# Publishes with provenance from a tagged commit. Run the release gate first:
-# version-bump PR + dated CHANGELOG entry + green CI + publish dry-run.
+# Release verification for tags. npm publication is DEFERRED — `@0xramp/sdk`
+# is not on npm yet (partners install from the repository; README § Install) —
+# so this workflow runs the release gate from the tagged commit with no
+# registry write: tag ↔ package.json version ↔ dated CHANGELOG entry, plus
+# typecheck, tests, build and a publish dry-run (tarball contents only).
+#
+# When npm publication is unblocked, re-add:
+#   - name: Publish (provenance)
+#     run: npm publish --provenance --access public
+#     env: { NODE_AUTH_TOKEN: '${{ secrets.NPM_TOKEN }}' }
+# with `id-token: write` in `permissions` and an NPM_TOKEN secret (or npm
+# OIDC trusted publishing after the first owner-side publish). Until then
+# there is deliberately no publish path and no npm token in this repo.
 
 on:
   push:
@@ -9,11 +20,10 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  publish:
-    name: publish with provenance
+  verify-release:
+    name: verify release (npm publish deferred)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,7 +31,6 @@ jobs:
         with:
           node-version: 24.22.1
           cache: npm
-          registry-url: https://registry.npmjs.org
       - run: npm ci
       - name: Release gate (tag ↔ package.json version ↔ CHANGELOG)
         run: |
@@ -42,7 +51,5 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - name: Publish (provenance)
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish dry-run (no registry write)
+        run: npm publish --dry-run --access public
