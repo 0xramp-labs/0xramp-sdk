@@ -1,0 +1,407 @@
+<!doctype html>
+<!--
+  0xramp mobile simulator — a browser phone harness that plays a Zingo-like
+  wallet hosting the 0xramp pane. Served over loopback HTTP from the
+  repository root. Sandbox mode is fully synthetic (sandbox pane + fake
+  wallet); live mode targets issued 0xramp partner configuration and never
+  fakes a broadcast. Use the browser devtools device toolbar for touch.
+  Powered by 0xramp · P2P.me
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>0xramp mobile simulator (Zingo pilot harness)</title>
+    <style>
+      :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+      body { margin: 0; padding: 16px; }
+      header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+      h1 { font-size: 1.1rem; margin: 0; }
+      .badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 999px; background: #f59e0b22; color: #b45309; border: 1px solid #f59e0b55; }
+      .muted { color: gray; font-size: 0.85rem; }
+      .cols { display: grid; grid-template-columns: minmax(320px, 34rem) auto; gap: 24px; align-items: start; }
+      fieldset { border: 1px solid currentColor; border-radius: 8px; margin: 12px 0; padding: 10px; }
+      label { display: block; font-size: 0.8rem; margin: 6px 0 2px; }
+      input, select { width: 100%; box-sizing: border-box; font: inherit; padding: 6px; border-radius: 6px; border: 1px solid currentColor; background: transparent; color: inherit; }
+      button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid currentColor; background: transparent; cursor: pointer; margin: 4px 8px 4px 0; }
+      #state { font-weight: 600; margin: 8px 0; min-height: 1.2em; }
+      #log { border: 1px solid currentColor; border-radius: 8px; padding: 10px; font-family: ui-monospace, monospace; font-size: 0.78rem; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 10rem; max-height: 20rem; overflow-y: auto; }
+      .out { color: #047857; } .in { color: #1d4ed8; } .err { color: #b91c1c; }
+      footer { margin-top: 14px; font-size: 0.78rem; color: gray; }
+
+      /* Phone shell */
+      .phone { width: 390px; border: 10px solid #111827; border-radius: 44px; background: #111827; box-shadow: 0 12px 32px #0006; }
+      .screen { border-radius: 34px; overflow: hidden; background: #0b1220; color: #e5e7eb; height: 780px; display: flex; flex-direction: column; position: relative; }
+      .statusbar { display: flex; justify-content: space-between; font-size: 0.72rem; padding: 10px 18px 4px; color: #9ca3af; }
+      .appbar { padding: 6px 18px 10px; }
+      .appbar .title { font-weight: 700; font-size: 0.95rem; }
+      .appbar .sub { font-size: 0.7rem; color: #9ca3af; }
+      .walletbody { flex: 1; overflow-y: auto; padding: 8px 18px; display: flex; flex-direction: column; gap: 10px; }
+      .card { background: #16223a; border: 1px solid #2b3a57; border-radius: 14px; padding: 12px; }
+      .balance { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+      .entrybtn { width: 100%; padding: 12px; border-radius: 12px; border: none; background: #f59e0b; color: #111827; font-weight: 700; font-size: 0.9rem; cursor: pointer; }
+      .entrybtn[disabled] { opacity: 0.5; cursor: not-allowed; }
+      .attribution { text-align: center; font-size: 0.7rem; color: #9ca3af; margin-top: 8px; }
+      .sessionstate { font-size: 0.78rem; min-height: 2.4em; }
+      .minibtns button { padding: 6px 10px; font-size: 0.78rem; margin: 2px 6px 2px 0; background: #16223a; color: #e5e7eb; }
+      iframe#pane { flex: 1; width: 100%; border: none; background: #fff; display: none; }
+      .panecaption { font-size: 0.66rem; color: #9ca3af; text-align: center; padding: 2px; background: #0b1220; }
+      .sheet { position: absolute; inset: auto 0 0 0; background: #f8fafc; color: #0f172a; border-radius: 18px 18px 0 0; padding: 14px 16px; display: none; box-shadow: 0 -8px 24px #0008; }
+      .sheet.open { display: block; }
+      .sheet h3 { margin: 0 0 6px; font-size: 0.9rem; }
+      .sheet .row { font-size: 0.8rem; margin: 3px 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+      .sheet .actions { display: flex; gap: 10px; margin-top: 10px; }
+      .sheet .actions button { flex: 1; margin: 0; padding: 10px; border-radius: 10px; border: none; font-weight: 600; }
+      .btn-cancel { background: #e2e8f0; }
+      .btn-confirm { background: #166534; color: #fff; }
+      .sheet .note { font-size: 0.68rem; color: #475569; margin-top: 8px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>0xramp mobile simulator — Zingo pilot harness</h1>
+      <span class="badge" id="modeBadge">SANDBOX</span>
+    </header>
+    <p class="muted">
+      A browser stand-in for the Zingo mobile app: hosts the 0xramp pane in
+      the two v0 shapes and routes the registered pilot deep-link
+      (<code>zingo://0xramp</code>). Open the devtools device toolbar for
+      touch + mobile viewport. Sandbox data is synthetic; the simulated
+      wallet never signs anything real.
+    </p>
+
+    <div class="cols">
+      <div>
+        <fieldset>
+          <legend>Configuration (rebuilds the host on change)</legend>
+          <label for="mode">Mode</label>
+          <select id="mode">
+            <option value="sandbox" selected>Sandbox (synthetic, zero access)</option>
+            <option value="live">Live (issued staging/production config)</option>
+          </select>
+          <div id="liveConfig" style="display:none">
+            <label for="paneMode">Hosting shape</label>
+            <select id="paneMode">
+              <option value="webview" selected>WebView (iframe pane + bridge)</option>
+              <option value="browser">System browser (popup, bridge-less)</option>
+            </select>
+            <label for="partnerId">Partner ID (issued, public)</label>
+            <input id="partnerId" value="zingo" autocomplete="off" />
+            <label for="apiBaseUrl">API origin (staging)</label>
+            <input id="apiBaseUrl" value="https://0xramp-api-staging.up.railway.app" autocomplete="off" />
+            <label for="paneOrigins">Pane origins (comma-separated)</label>
+            <input id="paneOrigins" value="https://0xramp-api-staging.up.railway.app" autocomplete="off" />
+          </div>
+          <div id="sandboxShapes" style="display:none">
+            <label for="paneModeSandbox">Hosting shape (sandbox pane supports the bridge)</label>
+            <select id="paneModeSandbox">
+              <option value="webview" selected>WebView (iframe pane + bridge)</option>
+              <option value="browser">System browser (popup, bridge-less)</option>
+            </select>
+          </div>
+          <label for="returnUrl">returnUrl — registered pilot scheme, exact string</label>
+          <input id="returnUrl" value="zingo://0xramp" autocomplete="off" />
+        </fieldset>
+
+        <fieldset>
+          <legend>Device deep-link bar (simulates OS scheme routing)</legend>
+          <label for="deeplink">Incoming link (paste a <code>zingo://</code> link, or synthesize one)</label>
+          <input id="deeplink" placeholder="zingo://0xramp?…" autocomplete="off" />
+          <button id="btn-route">Route to wallet</button>
+          <button id="btn-sim-return">Simulate return link (settled)</button>
+          <button id="btn-sim-handoff">Simulate SELL handoff (DRAFT)</button>
+          <button id="btn-deliver-resume" style="display:none">Deliver resume link to pane</button>
+        </fieldset>
+
+        <p id="state" aria-live="polite"></p>
+        <div id="log" aria-live="polite"></div>
+        <footer>
+          Powered by 0xramp · P2P.me — this page is a development harness,
+          never a production host. The statusTicket is bearer data: real
+          hosts keep it in secure storage. Deep-link claims are advisory;
+          the ticketed status endpoint is the receipt.
+        </footer>
+      </div>
+
+      <div class="phone">
+        <div class="screen">
+          <div class="statusbar"><span>9:41</span><span>Zingo-like wallet · SIMULATED · sandbox-only funds</span></div>
+          <div class="appbar">
+            <div class="title">Zingo-like wallet (simulated)</div>
+            <div class="sub">Pilot harness — no real keys, no real ZEC</div>
+          </div>
+          <div class="walletbody">
+            <div class="card">
+              <div class="muted" style="color:#9ca3af;font-size:0.72rem">Available (synthetic)</div>
+              <div class="balance">12.3456789 ZEC</div>
+            </div>
+            <div class="card">
+              <div style="font-size:0.85rem;font-weight:600;margin-bottom:6px">Buy &amp; sell ZEC with local fiat</div>
+              <button class="entrybtn" id="btn-start">Sell ZEC → BRL (Pix)</button>
+              <div class="attribution">Powered by 0xramp · P2P.me</div>
+            </div>
+            <div class="card">
+              <div class="sessionstate" id="phoneState">Ready.</div>
+              <div class="minibtns">
+                <button id="btn-status">Check status</button>
+                <button id="btn-reopen">Reopen pane</button>
+                <button id="btn-close-pane">Close pane</button>
+                <button id="btn-reset">Reset demo</button>
+              </div>
+            </div>
+            <div class="panecaption" id="paneCaption" style="display:none">0xramp pane — origin visible</div>
+            <iframe id="pane" title="0xramp pane"></iframe>
+          </div>
+          <div class="sheet" id="sheet">
+            <h3>Confirm ZEC send <span id="sheetMode" class="muted"></span></h3>
+            <div class="row" id="sheet-address"></div>
+            <div class="row" id="sheet-amount"></div>
+            <div class="row" id="sheet-request"></div>
+            <div class="actions">
+              <button class="btn-cancel" id="btn-sheet-cancel">Cancel</button>
+              <button class="btn-confirm" id="btn-sheet-confirm">Confirm &amp; broadcast</button>
+            </div>
+            <div class="note" id="sheet-note"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module">
+      import * as SDK from "../../dist/index.js";
+      import { createSandboxClient, createSimWalletHost } from "./sim.js";
+
+      "use strict";
+      const $ = (id) => document.getElementById(id);
+      const logEl = $("log");
+      function log(kind, text) {
+        const line = document.createElement("div");
+        line.className = kind;
+        line.textContent = `[${new Date().toISOString().slice(11, 23)}] ${text}`;
+        logEl.appendChild(line);
+        while (logEl.childElementCount > 200) logEl.firstChild.remove();
+      }
+
+      const STORAGE_KEY = "0xramp.mobile-sim.demo";
+      const SEND_STORE_KEY = "0xramp.mobile-sim.sendstore";
+      const storage = {
+        async read() { return localStorage.getItem(STORAGE_KEY); },
+        async write(value) {
+          if (value === null) localStorage.removeItem(STORAGE_KEY);
+          else localStorage.setItem(STORAGE_KEY, value);
+        },
+      };
+
+      let host = null;
+      let popup = null;
+      let paneOrigin = null;
+      let resumeUrl = null;
+
+      function fakeTxid() {
+        const bytes = new Uint8Array(32);
+        crypto.getRandomValues(bytes);
+        return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+      }
+
+      // Simulated zingolib confirmation sheet. In live mode the confirm
+      // button still refuses: the harness never fakes a real broadcast.
+      let sheetResolve = null;
+      function wallet(request, { signal }) {
+        const live = $("mode").value === "live";
+        return new Promise((resolve) => {
+          if (signal.aborted) return resolve({ cancel: true, reason: "aborted" });
+          $("sheet-address").textContent = `To: ${request.address}`;
+          $("sheet-amount").textContent = `Amount: ${SDK.formatZatoshiAsZec(BigInt(request.amountZat))} ZEC (exact)`;
+          $("sheet-request").textContent = `Request: ${request.requestId}`;
+          $("sheetMode").textContent = live ? "— LIVE MODE" : "— sandbox";
+          $("sheet-note").textContent = live
+            ? "Live mode: the simulated wallet refuses sends — no real signing exists in this harness."
+            : "Sandbox only: a fake txid is journaled; nothing is broadcast.";
+          $("sheet").classList.add("open");
+          const finish = (approve) => {
+            $("sheet").classList.remove("open");
+            sheetResolve = null;
+            if (approve && live) resolve({ cancel: true, reason: "simulated wallet — live sends are refused" });
+            else if (approve) resolve({ txid: fakeTxid() });
+            else resolve({ cancel: true, reason: "user declined" });
+          };
+          sheetResolve = finish;
+          signal.addEventListener("abort", () => finish(false), { once: true });
+        });
+      }
+      $("btn-sheet-confirm").addEventListener("click", () => { sheetResolve?.(true); });
+      $("btn-sheet-cancel").addEventListener("click", () => { sheetResolve?.(false); });
+
+      function paneMode() { return ($("mode").value === "live" ? $("paneMode") : $("paneModeSandbox")).value; }
+
+      function transportFor() {
+        const iframe = $("pane");
+        return {
+          post(message) {
+            iframe.contentWindow?.postMessage(JSON.stringify(message), paneOrigin ?? "*");
+          },
+          subscribe(handler) {
+            const listener = (event) => {
+              if (event.source !== iframe.contentWindow) return;
+              if (paneOrigin !== null && event.origin !== paneOrigin) return;
+              handler(event.data);
+            };
+            window.addEventListener("message", listener);
+            return () => window.removeEventListener("message", listener);
+          },
+        };
+      }
+
+      function openPane(url) {
+        if (paneMode() === "webview") {
+          const iframe = $("pane");
+          iframe.src = url;
+          iframe.style.display = "block";
+          $("paneCaption").style.display = "block";
+          $("paneCaption").textContent = `0xramp pane — ${new URL(url).origin} (origin visible)`;
+          return { close() { iframe.src = "about:blank"; iframe.style.display = "none"; $("paneCaption").style.display = "none"; } };
+        }
+        popup = window.open(url, "0xramp-sim", "popup,width=420,height=760");
+        if (popup === null) { log("err", "Popup blocked — allow popups for this origin, then Reopen pane."); return null; }
+        log("out", `system browser (simulated): opened ${url}`);
+        return { close() { try { popup?.close(); } catch {} popup = null; } };
+      }
+      setInterval(() => {
+        if (popup && popup.closed) { popup = null; log("in", "Pane window closed by user. Check status before resuming."); }
+      }, 1000);
+
+      function onState(state) {
+        $("state").textContent = state.message;
+        $("phoneState").textContent = state.message;
+        if (state.resumeUrl !== null && state.resumeUrl !== resumeUrl) {
+          resumeUrl = state.resumeUrl;
+          $("btn-deliver-resume").style.display = "inline-block";
+          log("in", `resume link (DRAFT, advisory): ${resumeUrl}`);
+        }
+        $("btn-start").disabled = state.active || state.blocked;
+      }
+
+      function facade() {
+        if ($("mode").value === "sandbox") {
+          $("modeBadge").textContent = "SANDBOX";
+          paneOrigin = location.origin;
+          return createSandboxClient({
+            sdk: SDK,
+            sandboxPaneUrl: new URL("../sandbox/sandbox-pane.html", location.href).toString(),
+          });
+        }
+        $("modeBadge").textContent = "LIVE";
+        const apiBaseUrl = $("apiBaseUrl").value.trim();
+        paneOrigin = $("paneOrigins").value.split(",").map((s) => s.trim()).filter(Boolean)[0] ?? null;
+        const ramp = SDK.createRampClient({
+          environment: "staging",
+          partnerId: $("partnerId").value.trim(),
+          apiBaseUrl,
+          paneOrigins: paneOrigin ? [paneOrigin] : undefined,
+          sendStore: SDK.createZecSendStore({
+            get: (key) => Promise.resolve(localStorage.getItem(`${SEND_STORE_KEY}.${key}`)),
+            set: (key, value) => Promise.resolve(localStorage.setItem(`${SEND_STORE_KEY}.${key}`, value)),
+          }),
+        });
+        return {
+          ...ramp,
+          parseZecSendHandoffUrl: SDK.parseZecSendHandoffUrl,
+          buildZecSendResumeUrl: SDK.buildZecSendResumeUrl,
+        };
+      }
+
+      function buildHost() {
+        const client = facade();
+        return createSimWalletHost({
+          client,
+          storage,
+          sendStore: $("mode").value === "sandbox"
+            ? SDK.createMemoryZecSendStore()
+            : SDK.createZecSendStore({
+                get: (key) => Promise.resolve(localStorage.getItem(`${SEND_STORE_KEY}.${key}`)),
+                set: (key, value) => Promise.resolve(localStorage.setItem(`${SEND_STORE_KEY}.${key}`, value)),
+              }),
+          transport: transportFor(),
+          wallet,
+          openPane,
+          paneMode: paneMode(),
+          returnUrl: $("returnUrl").value.trim() || "zingo://0xramp",
+          onState,
+        });
+      }
+      function rebuildHost() {
+        host?.dispose();
+        resumeUrl = null;
+        $("btn-deliver-resume").style.display = "none";
+        try {
+          host = buildHost();
+          void host.initialize();
+        } catch (error) {
+          host = null;
+          log("err", `Host build failed: ${String(error)}`);
+          $("state").textContent = String(error);
+        }
+      }
+
+      for (const id of ["mode", "paneMode", "paneModeSandbox", "returnUrl", "apiBaseUrl", "paneOrigins", "partnerId"]) {
+        $(id).addEventListener("change", () => {
+          $("liveConfig").style.display = $("mode").value === "live" ? "block" : "none";
+          $("sandboxShapes").style.display = $("mode").value === "live" ? "none" : "block";
+          rebuildHost();
+        });
+      }
+      $("mode").dispatchEvent(new Event("change"));
+
+      $("btn-start").addEventListener("click", () => {
+        try {
+          host ??= buildHost();
+        } catch (error) { log("err", String(error)); return; }
+        void host.initialize().then(() => host.start({
+          direction: "sell", asset: "ZEC", fiat: "BRL",
+          returnUrl: $("returnUrl").value.trim(),
+          partnerSessionId: `sim-${Date.now()}`,
+        }));
+        log("out", "start() — creation intent persisted before the POST");
+      });
+      $("btn-status").addEventListener("click", () => { host ??= buildHost(); void host.initialize().then(() => host.refreshStatus()); });
+      $("btn-reopen").addEventListener("click", () => { host ??= buildHost(); void host.initialize().then(() => host.resume()); });
+      $("btn-close-pane").addEventListener("click", () => host?.closePane());
+      $("btn-reset").addEventListener("click", async () => {
+        host?.dispose(); host = null;
+        await storage.write(null);
+        Object.keys(localStorage).filter((k) => k.startsWith(`${SEND_STORE_KEY}.`)).forEach((k) => localStorage.removeItem(k));
+        $("state").textContent = ""; $("phoneState").textContent = "Ready.";
+        log("out", "Demo storage cleared.");
+      });
+
+      $("btn-route").addEventListener("click", () => {
+        const url = $("deeplink").value.trim();
+        if (url === "") return;
+        log("in", `OS routed deep-link to the wallet: ${url}`);
+        host?.handleDeepLink(url);
+      });
+      $("btn-sim-return").addEventListener("click", () => {
+        const ref = host?.sessionRef();
+        if (ref === null || ref === undefined) { log("err", "No active session — start one first."); return; }
+        const url = `zingo://0xramp?sessionRef=${encodeURIComponent(ref)}&outcome=settled`;
+        $("deeplink").value = url;
+        log("in", `simulated return link (advisory): ${url}`);
+        host?.handleDeepLink(url);
+      });
+      $("btn-sim-handoff").addEventListener("click", () => {
+        const ref = host?.sessionRef();
+        if (ref === null || ref === undefined) { log("err", "No active session — start one first."); return; }
+        const url = `zingo://0xramp/send?sessionRef=${encodeURIComponent(ref)}&requestId=reqSIM${Date.now().toString(36)}&address=t1FakeAddrForFixtures9zqqqqqqqqqqqqq&amountZat=5000000&memo=Simulated%20handoff`;
+        $("deeplink").value = url;
+        log("in", `simulated pane → wallet handoff (DRAFT, unfrozen): ${url}`);
+        host?.handleDeepLink(url);
+      });
+      $("btn-deliver-resume").addEventListener("click", () => {
+        if (resumeUrl === null) return;
+        log("out", `wallet → pane resume link delivered (advisory txid evidence): ${resumeUrl}`);
+        if (paneMode() === "webview") $("pane").src = resumeUrl;
+        else popup = window.open(resumeUrl, "0xramp-sim");
+      });
+    </script>
+  </body>
+</html>

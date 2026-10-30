@@ -11,7 +11,9 @@
     "examples/react-native-host/host.ts",
     "examples/react-native-host/host.test.ts",
     "examples/web-host/host.js",
-    "examples/web-host/host.test.ts"
+    "examples/web-host/host.test.ts",
+    "examples/mobile-sim/sim.js",
+    "examples/mobile-sim/sim.test.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }

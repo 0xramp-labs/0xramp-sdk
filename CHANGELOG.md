@@ -8,6 +8,18 @@ All notable changes to this project are documented here. Format based on
 
 ### Added
 
+- Mobile simulator example (`examples/mobile-sim/`): a zero-install browser
+  phone harness for the Zingo pilot — plays a Zingo-like wallet hosting the
+  pane in both v0 shapes (WebView iframe + full bridge with a simulated
+  confirmation sheet and journal, and the bridge-less system-browser popup),
+  with a device deep-link bar that simulates OS routing of the registered
+  pilot scheme `zingo://0xramp`: advisory return links (including foreign
+  sessions, dropped) and the DRAFT zec-send handoff/resume codec
+  (`parseZecSendHandoffUrl` → sheet → journal → `buildZecSendResumeUrl`).
+  Sandbox mode is fully synthetic against the sandbox pane with a scripted
+  status sequence; live mode targets the issued staging configuration and
+  the simulated wallet refuses live sends — no fake broadcast can reach a
+  real session. Covered by the opt-in partner test suite.
 - Web host example (`examples/web-host/`): a zero-install browser reference
   for the bridge-less **popup hosting mode** (create → open popup → advisory
   return link → ticketed status), mirroring the React Native host controller
