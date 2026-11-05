@@ -43,6 +43,14 @@ describe("parseZecSendHandoffUrl", () => {
     });
   });
 
+  it("parses the registered return URL itself as the handoff base (no path, no memo), unlike a return link", () => {
+    const link = `zingo://0xramp?sessionRef=${SESSION_REF}&requestId=${REQUEST_ID}&address=${ADDRESS}&amountZat=5000000`;
+    expect(parseZecSendHandoffUrl(link, { sessionRef: SESSION_REF })).toEqual({ sessionRef: SESSION_REF, requestId: REQUEST_ID, address: ADDRESS, amountZat: "5000000" });
+    // The discriminator a host must use before falling back to the return parser:
+    expect(new URL(link).searchParams.has("requestId")).toBe(true);
+    expect(new URL(`zingo://0xramp?sessionRef=${SESSION_REF}&outcome=settled`).searchParams.has("requestId")).toBe(false);
+  });
+
   it("omits the memo key when the link carries none", () => {
     expect(parseZecSendHandoffUrl(CANONICAL_HANDOFF, EXPECTED)).not.toHaveProperty("memo");
   });
@@ -136,6 +144,13 @@ describe("buildZecSendResumeUrl", () => {
     expect(buildZecSendResumeUrl(`zramp:ramp?sessionRef=${SESSION_REF}`, { txid: TXID })).toBe(
       `zramp:ramp?sessionRef=${SESSION_REF}&txid=${TXID}`,
     );
+  });
+
+  it("keeps the #paneToken fragment of a verbatim session URL after the appended evidence", () => {
+    const base = `${PANE_URL}#paneToken=paneGOLDEN00000000000000000000000000000001`;
+    const resume = buildZecSendResumeUrl(base, { txid: TXID });
+    expect(resume).toBe(`${PANE_URL}&txid=${TXID}#paneToken=paneGOLDEN00000000000000000000000000000001`);
+    expect(new URL(resume).hash).toBe(new URL(base).hash);
   });
 
   it("round-trips through the existing channel-5 parser (sessionRef intact)", () => {

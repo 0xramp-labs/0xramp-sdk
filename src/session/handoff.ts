@@ -4,15 +4,18 @@
  * **DRAFT — unfrozen, pending partner confirmation.** The wallet's renamed
  * return scheme and its native send API are not confirmed yet, so the
  * query-param encoding below is a reviewable draft: it is NOT part of the
- * PSP-v1 conformance set, pane-side conformance is NOT claimed, and the
- * encoding may change before it freezes. Draft vectors live in
+ * PSP-v1 conformance set, no shared gate proves pane-side conformance although
+ * the pane targets this encoding, and the encoding may change before it
+ * freezes. Draft vectors live in
  * `fixtures/psp-v1/draft/`, which the frozen fixture gate does not load.
  *
  * Draft encoding (dedicated query params on the host's registered scheme):
- * - pane → wallet handoff link:
- *   `<scheme>:…?sessionRef=…&requestId=…&address=<t-addr>&amountZat=<integer>[&memo=…]`
- * - wallet → pane resume link: an existing pane/return URL plus advisory
- *   txid evidence params `txid=<64-hex>` and/or `txids=<comma-separated 64-hex>`.
+ * - pane → wallet handoff link, with the registered return URL itself as the
+ *   base (no path segment added; SELL deposits carry no memo):
+ *   `<returnUrl>?sessionRef=…&requestId=…&address=<t-addr>&amountZat=<integer>[&memo=…]`
+ * - wallet → pane resume link: the verbatim `sessionUrl` (query and
+ *   `#paneToken` fragment intact) plus advisory txid evidence params
+ *   `txid=<64-hex>` and/or `txids=<comma-separated 64-hex>`.
  *
  * Trust model: deep links are spoofable by design. A parsed handoff is a
  * payment *request* for the wallet's native confirmation sheet — the SDK
@@ -150,10 +153,12 @@ export interface ZecSendResumeEvidence {
 
 /**
  * **DRAFT — unfrozen, pending partner confirmation.** Build a wallet → pane
- * resume URL: an existing pane/return URL plus advisory txid evidence as
- * `txid` / comma-joined `txids` query params. Pure string building — the
- * outcome is evidence for the pane to reconcile, never an authoritative
- * receipt; the pane's own chain view and the status endpoint decide.
+ * resume URL: the verbatim `sessionUrl` (its query and `#paneToken` fragment
+ * are preserved — the pane cannot open without the fragment) plus advisory
+ * txid evidence as `txid` / comma-joined `txids` query params. Pure string
+ * building — the outcome is evidence for the pane to reconcile, never an
+ * authoritative receipt; the pane's own chain view and the status endpoint
+ * decide.
  *
  * Fail closed on an unparseable base (`InvalidReturnUrlError`), missing
  * evidence (`ConfigError`), schema-violating values (`SchemaViolationError`),

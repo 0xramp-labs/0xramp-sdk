@@ -6,7 +6,7 @@
 
 A TypeScript SDK for wallet apps that want to offer 0xramp ZEC ↔ local-fiat ramps (Pix, UPI, …) by hosting **`0xramp.app`** in an embedded WebView or in the system browser (origin visible either way). The wallet signs **only** Zcash sends from its own wallet core. Everything else — identity (passkeys), the Base account, P2P.me orders, quotes, limits, fraud screening, fiat payout — runs inside `0xramp.app`, unchanged.
 
-**Hosting modes.** Desktop hosts embed the pane in a WebView with the postMessage bridge. Mobile hosts (passkey-first products) open the pane in the system browser (auth-session, e.g. `openAuthSessionAsync`); desktop web hosts open it as a top-level popup (`window.open`) — both bridge-less hosting modes: the pane drives the flow on-page and the host resumes via its registered return deep link (return-link navigation is planned pane-side work; not yet live in the deployed pane — see the partner guide); the ticketed status endpoint stays authoritative. See the partner guide's "Browser-hosted pane (mobile and web hosts)" section.
+**Hosting modes.** Desktop hosts embed the pane in a WebView with the postMessage bridge. Mobile hosts (passkey-first products) open the pane in the system browser (auth-session, e.g. `openAuthSessionAsync`); desktop web hosts open it as a top-level popup (`window.open`) — both bridge-less hosting modes: the pane hands the send request to the host on the registered return link, takes the resume evidence back on its own address and navigates back on the registered link at flow end (confirm the deployment you target — see the partner guide); the ticketed status endpoint stays authoritative. See the partner guide's "Browser-hosted pane (mobile and web hosts)" section.
 
 **Attribution:** integrations must display **"Powered by 0xramp · P2P.me"** at the ramp entry point.
 
@@ -143,17 +143,26 @@ browser-hosted mode, the SDK ships a draft deep-link handoff codec
   with `ZecSendRequestPayload`, so existing `ZecSendStore` claim/journal
   semantics apply unchanged (exactly-once, replay-safe).
 - `buildZecSendResumeUrl(baseUrl, evidence)` builds the wallet → pane resume
-  URL: an existing pane/return URL plus advisory txid evidence (`txid` and/or
-  comma-joined `txids`, 1–32 × 64-hex), consistent with the existing
-  txid/txids schema constraints. The 2048-character deep-link bound binds
+  URL: the **verbatim `sessionUrl`** (its query and `#paneToken` fragment are
+  preserved; the pane cannot open without the fragment) plus advisory txid
+  evidence (`txid` and/or comma-joined `txids`, 1–32 × 64-hex), consistent
+  with the existing txid/txids schema constraints. The 2048-character deep-link bound binds
   first: depending on the base URL, roughly 28–30 txids fit — larger evidence
   sets fail closed (`InvalidReturnUrl`) and reconcile via the status endpoint.
+- `buildZecSendReply(sessionRef, requestId, outcome)` (root and
+  `@0xramp/sdk/bridge`) is the bridge's own mapping from a wallet outcome to
+  the PSP-v1 reply a host stores with `ZecSendStore.complete` when it serves
+  handoff links itself. A missing or malformed outcome maps to pending
+  `broadcast-unknown`; never resend on it.
 
 Draft, unfrozen, and excluded from the conformance set: draft vectors live in
-`fixtures/psp-v1/draft/` (not in the frozen golden set), **pane-side
-conformance is NOT claimed**, and the encoding may change before it freezes.
+`fixtures/psp-v1/draft/` (not in the frozen golden set), **no shared gate
+proves pane-side conformance** although the pane targets this encoding, and
+the encoding may change before it freezes.
 Deep links are advisory by design; the wallet's native confirmation sheet is
-the approval gate and the ticketed status endpoint stays authoritative.
+the approval gate and the ticketed status endpoint stays authoritative. The
+handoff link has no integrity binding yet: the wallet-side cross-check of its
+address and amount must be agreed before a live pilot (partner guide section 9).
 
 ## Amounts, errors & security posture
 

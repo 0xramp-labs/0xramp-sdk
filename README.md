@@ -94,12 +94,13 @@ bridge.close();
 ramp.restoreSession(await secureSessionStorage.load());
 ```
 
-On mobile the design target is to skip the WebView: open
-`session.sessionUrl` in the system browser (browser-hosted mode, no bridge)
-and resume via your return scheme. The deployed pane does not yet implement
-this path (no QR/copy outside a WebView; no returnUrl navigation) — see
+On mobile, skip the WebView: open `session.sessionUrl` in the system browser
+(browser-hosted mode, no bridge). In that mode the pane hands the send
+request to your app on your registered return link, records the transaction
+evidence your app brings back on the pane address, and returns to your app on
+the registered link at flow end — see
 [Browser-hosted pane (mobile and web hosts)](docs/partner-guide.md#9-browser-hosted-pane-mobile-and-web-hosts)
-for the current state.
+for the contract and which deployment carries it.
 
 `myWallet`, storage and UI methods above are partner-owned ports. An approved
 send returns `{ txid }`; use `{ cancel: true, reason }` only when no broadcast

@@ -5,9 +5,9 @@ exercise the draft zec-send deep-link handoff codec (`src/session/handoff.ts`)
 for the browser-hosted pane mode. They are **not** part of the PSP-v1 `0.1.0`
 conformance set: this subdirectory is deliberately excluded from the frozen
 golden-fixture loader (`src/protocol/fixtures.test.ts` reads only top-level
-`*.json` files), `fixtures/psp-v1/manifest.json` does not list it, and
-pane-side conformance is **not** claimed. The encoding may change before it
-freezes; freezing waits on the partner's renamed return scheme and confirmed
+`*.json` files), `fixtures/psp-v1/manifest.json` does not list it, and no
+shared gate proves pane-side conformance, although the pane targets this
+encoding. The encoding may change before it freezes; freezing waits on the partner's renamed return scheme and confirmed
 wallet send API.
 
 ## Vector shape
@@ -34,14 +34,17 @@ by `src/session/handoff.fixtures.test.ts`:
 
 - Handoff link: dedicated query params on the host's registered scheme —
   `sessionRef`, `requestId`, `address` (transparent t-addr), `amountZat`
-  (canonical integer zatoshi string), optional `memo` (≤ 512 chars). Parsing
+  (canonical integer zatoshi string), optional `memo` (≤ 512 chars). The pane
+  uses the registered return URL itself as the base (no path segment added;
+  SELL deposits carry no `memo`): `handoff.registered-base.json`. Parsing
   fails closed on duplicated query params, ignores a trailing `#fragment`,
   and requires the expected session to match.
-- Resume link: an existing pane/return URL plus advisory evidence params
+- Resume link: the verbatim `sessionUrl` (query and `#paneToken` fragment
+  intact — `resume.fragment.json`) plus advisory evidence params
   `txid=<64-hex>` and/or `txids=<comma-separated 64-hex, 1–32>`. The
   2048-character deep-link bound binds first: depending on the base URL,
   roughly 28–30 txids fit — larger evidence sets reconcile via the status
-  endpoint.
+  endpoint. A `#fragment` on the base is preserved after the appended query.
 
 Deep links are spoofable by design: handoff parses are payment *requests* for
 the wallet's native confirmation sheet, and resume txids are advisory evidence

@@ -4,7 +4,7 @@
  * Loads `fixtures/psp-v1/draft/` — deliberately a subdirectory, invisible to
  * the frozen fixture parity loader (`src/protocol/fixtures.test.ts` reads
  * only top-level `*.json`). These vectors are UNFROZEN, excluded from the
- * PSP-v1 `0.1.0` conformance set, and claim no pane-side conformance; see
+ * PSP-v1 `0.1.0` conformance set, and are not a shared pane-side gate; see
  * `fixtures/psp-v1/draft/README.md`.
  */
 import { readdirSync, readFileSync } from "node:fs";
@@ -64,7 +64,9 @@ describe("PSP-v1 draft handoff vectors (unfrozen)", () => {
     expect(names).toContain("handoff.negative-amount.json");
     expect(names).toContain("handoff.negative-duplicate-param.json");
     expect(names).toContain("handoff.negative-mismatch.json");
+    expect(names).toContain("handoff.registered-base.json");
     expect(names).toContain("resume.canonical.json");
+    expect(names).toContain("resume.fragment.json");
     expect(names).toContain("resume.negative-hex.json");
   });
 

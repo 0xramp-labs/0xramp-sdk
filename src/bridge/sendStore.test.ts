@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildZecSendReply } from "./index.js";
 import { createZecSendStore, sendReply } from "./sendStore.js";
 
 const session = "sessGOLDEN00000001";
@@ -50,5 +51,25 @@ describe("durable send journal", () => {
 
   it("requires a persisted claim before completing", async () => {
     await expect(createZecSendStore(storage()).complete(session, request, result)).rejects.toMatchObject({ code: "ConfigError" });
+  });
+});
+
+describe("buildZecSendReply (public mapping for hosts serving handoff links)", () => {
+  const [a, b] = ["a".repeat(64), "b".repeat(64)];
+  const reply = (outcome: unknown) => buildZecSendReply("sessGOLDEN00000001", "reqGOLDEN00000001", outcome);
+
+  it("is the same mapping the bridge records", () => {
+    expect(reply({ txid: a })).toMatchObject({ type: "psp/zec-send-result", payload: { txid: a } });
+    expect(reply({ txid: a, txids: [a, b] })).toMatchObject({ type: "psp/zec-send-result", payload: { txid: a, txids: [a, b] } });
+    expect(reply({ txids: [a] })).toMatchObject({ type: "psp/zec-send-result", payload: { txid: a } });
+    expect(reply({ txids: [a, b] })).toMatchObject({ type: "psp/zec-send-pending", payload: { reason: "multiple-transactions", txids: [a, b] } });
+    expect(reply({ cancel: true })).toMatchObject({ type: "psp/zec-send-cancel", payload: { reason: "user declined" } });
+    expect(reply({ pending: true, txids: [a] })).toMatchObject({ type: "psp/zec-send-pending", payload: { reason: "broadcast-unknown", txids: [a] } });
+  });
+  it("downgrades an inconsistent outcome and fails closed on a missing or malformed one", () => {
+    expect(reply({ txid: a, txids: [b] })).toMatchObject({ type: "psp/zec-send-pending", payload: { reason: "multiple-transactions", txids: [b] } });
+    for (const outcome of [undefined, null, "sent", { txid: "not-hex" }]) {
+      expect(reply(outcome)).toMatchObject({ type: "psp/zec-send-pending", payload: { reason: "broadcast-unknown" } });
+    }
   });
 });

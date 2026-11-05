@@ -37,6 +37,7 @@ export {
   type ZecSendOutcome,
   createZecSendStore,
   createMemoryZecSendStore,
+  buildZecSendReply,
   type ZecSendStore,
   type ZecSendStorage,
   type ZecSendRecord,

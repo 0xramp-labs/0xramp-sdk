@@ -1,14 +1,16 @@
 # 0xramp example host — Web (popup mode)
 
-Minimal browser host driving the **popup hosting mode** end to end:
-create → open popup → return link → authoritative status. No build tooling,
-no dependencies, no install step. This is integration reference code for web
-partners (a top-level popup under the visible `0xramp.app` origin), not a
-production page.
+Minimal browser host driving the **popup hosting mode**: create → open popup →
+return link → authoritative status. No build tooling, no dependencies, no
+install step. This is integration reference code for web partners (a top-level
+popup under the visible `0xramp.app` origin), not a production page.
 
-Popup mode is **bridge-less** (partner guide §9): there is no pane bridge, no
-wallet callback, and the host is never in the signing path. Sandbox mode uses
-only synthetic data; live API errors never fall back to a fake payment.
+Popup mode is **bridge-less** (partner guide §9): there is no pane bridge. The
+pane still hands its send request to the registered return URL, and this
+example has no wallet adapter: it reports that link instead of serving it, so
+it cannot fund a SELL on its own. A live web host needs its own signing path.
+Sandbox mode uses only synthetic data; live API errors never fall back to a
+fake payment.
 
 ## Run
 
@@ -27,8 +29,8 @@ a development setting; issued HTTPS origins are required for partner sessions.
 - **Sandbox mode** (default): exercises the full controller lifecycle with a
   synthetic session pointing at the sandbox pane and a scripted status
   sequence (`created → user-active → settled`). "Simulate return link" plays
-  the pane-side returnUrl navigation that deployed panes do not perform yet
-  (planned pane work — see the partner guide §9 readiness notes).
+  the pane-side returnUrl navigation the pane performs at flow end (confirm
+  the deployment you target — see the partner guide §9 Pane readiness).
 - **Live mode**: requires issued configuration (partner ID, API origin,
   pane origins). Session create/status hit the real hosted API. Live failures
   surface as errors and are never replaced with synthetic success.
@@ -51,10 +53,14 @@ a development setting; issued HTTPS origins are required for partner sessions.
 - `localStorage` here is **demo-only**. The `statusTicket` is bearer data:
   real web hosts keep it server-side or in secure storage, scoped per user.
 - The exact `returnUrl` string must be registered with 0xramp during
-  onboarding; the server compares it character-for-character.
+  onboarding; the server compares it character-for-character and refuses a
+  value with `?` or `#` in it (the registered string is also the base of the
+  pane's handoff link). This page prefills its own origin and path and routes
+  links by exact origin and path.
 - Partners receive no secret API key (public partner ID + origins only) —
   see the partner guide §1.
-- The deployed pane does not yet navigate to `returnUrl` at flow end and
-  shows no deposit QR outside a WebView (planned pane-side work); until then
-  a live popup run ends at the pane's in-pane states and status polling is
-  the receipt path. See [pilot gates](../../docs/partner-readiness.md).
+- The pane hands the send request to the host on the registered `returnUrl`
+  (a link carrying `requestId`) and navigates back on it at flow end; this
+  host has no wallet adapter, so it reports a handoff link instead of serving
+  it, and status polling stays the receipt path. Confirm the deployment you
+  target. See [pilot gates](../../docs/partner-readiness.md).

@@ -70,7 +70,7 @@ export default function App(): JSX.Element {
         ...(apiBaseUrl ? { apiBaseUrl } : {}), ...(paneOrigin ? { paneOrigins: [paneOrigin] } : {}), sendStore: liveStore,
       });
       const activeKey = `${STORAGE_SCOPE}.active-session`;
-      const current = createPartnerHost({ client: client.current, transport, wallet: liveWallet,
+      const current = createPartnerHost({ client: client.current, transport, wallet: liveWallet, sendStore: liveStore,
         storage: { read: () => SecureStore.getItemAsync(activeKey), write: value => value === null ? SecureStore.deleteItemAsync(activeKey) : SecureStore.setItemAsync(activeKey, value) },
         onState: value => { if (mounted) setState(value); },
       });

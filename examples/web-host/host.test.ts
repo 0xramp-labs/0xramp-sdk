@@ -11,7 +11,7 @@ const SESSION: RampSession = {
 };
 const INPUT: CreateSessionInput = {
   direction: "sell", asset: "ZEC", fiat: "BRL",
-  returnUrl: "https://host.example/ramp?0xramp-return=1",
+  returnUrl: "https://host.example/ramp",
   partnerSessionId: "partner-session-1",
 };
 
@@ -63,7 +63,10 @@ function makeFixture(
     client,
     storage,
     openPane: openPane as (url: string) => { close?: () => void } | null,
-    ownsReturnUrl: (url: string) => url.includes("0xramp-return=1"),
+    ownsReturnUrl: (url: string) => {
+      const target = new URL(url);
+      return `${target.origin}${target.pathname}` === INPUT.returnUrl && target.searchParams.has("sessionRef");
+    },
     onState: (s) => { states.push(s.message); },
   });
   return { host, storage, openPane, paneClose, states, getStatus };
@@ -105,15 +108,25 @@ describe("web-host popup controller", () => {
     const { host } = makeFixture({ getStatus } as unknown as Partial<RampClient>);
     await host.start(INPUT);
     getStatus.mockClear();
-    host.handleReturn(`https://host.example/ramp?0xramp-return=1&sessionRef=sessOTHER0000002&outcome=settled`);
+    host.handleReturn(`https://host.example/ramp?sessionRef=sessOTHER0000002&outcome=settled`);
     await vi.waitFor(() => expect(getStatus).not.toHaveBeenCalled());
+  });
+
+  it("reports a handoff link it cannot serve instead of reading it as a return", async () => {
+    const getStatus = vi.fn().mockResolvedValue(makeStatus());
+    const { host, states } = makeFixture({ getStatus } as unknown as Partial<RampClient>);
+    await host.start(INPUT);
+    getStatus.mockClear();
+    host.handleReturn(`https://host.example/ramp?sessionRef=${SESSION.sessionRef}&requestId=reqTEST00000001&address=t1FakeAddrForFixtures9zqqqqqqqqqqqqq&amountZat=5000000`);
+    expect(states.at(-1)).toContain("no wallet adapter");
+    expect(getStatus).not.toHaveBeenCalled();
   });
 
   it("refreshes authoritative status on a matching return link and clears a terminal session", async () => {
     const getStatus = vi.fn().mockResolvedValue(makeStatus({ outcome: "settled", terminal: true }));
     const { host, storage, paneClose } = makeFixture({ getStatus } as unknown as Partial<RampClient>);
     await host.start(INPUT);
-    host.handleReturn(`https://host.example/ramp?0xramp-return=1&sessionRef=${SESSION.sessionRef}&outcome=settled`);
+    host.handleReturn(`https://host.example/ramp?sessionRef=${SESSION.sessionRef}&outcome=settled`);
     await vi.waitFor(() => expect(getStatus).toHaveBeenCalledWith(SESSION.sessionRef));
     await vi.waitFor(() => expect(storage.write).toHaveBeenLastCalledWith(null));
     expect(paneClose).toHaveBeenCalled();

@@ -1,5 +1,8 @@
 /** Platform-independent lifecycle used by App.tsx and the opt-in partner simulation. */
-import type { CreateSessionInput, PaneBridge, PaneBridgeHandlers, PaneTransport, RampClient, RampSession } from "@0xramp/sdk";
+import { buildZecSendReply, buildZecSendResumeUrl, parseZecSendHandoffUrl } from "@0xramp/sdk";
+import type { CreateSessionInput, HostToPaneMessage, PaneBridge, PaneBridgeHandlers, PaneTransport, RampClient, RampSession, ZecSendResumeEvidence, ZecSendStore } from "@0xramp/sdk";
+
+type SendRequest = Parameters<NonNullable<PaneBridgeHandlers["onZecSendRequest"]>>[0];
 
 export interface SessionStorage {
   read(): Promise<string | null>;
@@ -16,10 +19,14 @@ interface HostOptions {
   storage: SessionStorage;
   transport: PaneTransport;
   wallet: NonNullable<PaneBridgeHandlers["onZecSendRequest"]>;
+  /** The durable, wallet-scoped journal shared by the bridge and handoff links: exactly once per requestId. */
+  sendStore: ZecSendStore;
+  /** Where the wallet → pane resume link goes (e.g. a new auth-session sheet). Without it an open WebView pane navigates to it, and a closed pane gets nothing. */
+  onResumeLink?: (url: string) => void;
   onState(state: HostState): void;
 }
 
-export function createPartnerHost({ client, storage, transport, wallet, onState }: HostOptions) {
+export function createPartnerHost({ client, storage, transport, wallet, sendStore, onResumeLink, onState }: HostOptions) {
   let session: RampSession | undefined;
   let bridge: PaneBridge | undefined;
   let disposed = false;
@@ -27,6 +34,10 @@ export function createPartnerHost({ client, storage, transport, wallet, onState 
   let initialized: Promise<void> | undefined;
   let operation: Promise<void> = Promise.resolve();
   let statusRequest: Promise<void> | undefined;
+  // Native sheets a handoff has open. Status can end the session under them; closing the pane cannot,
+  // because in browser-hosted mode the pane leaves on purpose at the handoff.
+  const openSheets = new Set<AbortController>();
+  let statusUnreadable = false;
   let state: HostState = { message: "Loading saved session", active: false, blocked: true, pane: null };
 
   function update(patch: Partial<HostState>) {
@@ -71,6 +82,7 @@ export function createPartnerHost({ client, storage, transport, wallet, onState 
     statusRequest = (async () => {
       try {
         const status = await client.getStatus(current.sessionRef);
+        statusUnreadable = false;
         if (disposed || session !== current) return;
         if (status.outcome === "expired") {
           // Expiry is reversible in PSP-v1; late deposits still need recovery.
@@ -78,6 +90,7 @@ export function createPartnerHost({ client, storage, transport, wallet, onState 
           update({ blocked: true, message: "Session expired. Reconcile late deposits before starting again." });
         } else if (status.terminal) {
           // Retain send-journal records; only the session pointer is cleared.
+          for (const sheet of openSheets) sheet.abort();
           close();
           update({ blocked: true });
           await storage.write(null);
@@ -85,6 +98,7 @@ export function createPartnerHost({ client, storage, transport, wallet, onState 
           update({ active: false, blocked: false, message: `Authoritative status: ${status.outcome}` });
         } else update({ message: `Authoritative status: ${status.outcome}` });
       } catch {
+        statusUnreadable = true;
         update({ message: "Status unavailable. Keep the saved session; do not send again." });
       }
     })().finally(() => { statusRequest = undefined; });
@@ -100,7 +114,7 @@ export function createPartnerHost({ client, storage, transport, wallet, onState 
     }
     bridge?.close();
     bridge = client.attachPaneBridge({
-      sessionRef: session.sessionRef, transport,
+      sessionRef: session.sessionRef, transport, sendStore,
       onZecSendRequest: wallet,
       onReady: () => update({ message: "Pane ready" }),
       onResult: () => { void refreshStatus(); },
@@ -109,6 +123,73 @@ export function createPartnerHost({ client, storage, transport, wallet, onState 
       onProtocolError: () => { close(); update({ message: "Bridge refused a message. Check status before resuming." }); },
     });
     update({ pane: { url: session.sessionUrl, sessionRef: session.sessionRef, generation }, message: "Opening 0xramp" });
+  }
+  /**
+   * What the pane can take back on a resume link. A single ID on a pending reply stays in the
+   * journal: the pane reads a one-element list as the deposit, and the wallet has not said that.
+   */
+  function resumeEvidence(reply: HostToPaneMessage): ZecSendResumeEvidence | undefined {
+    if (reply.type === "psp/zec-send-result") return { txid: reply.payload.txid, ...(reply.payload.txids ? { txids: reply.payload.txids } : {}) };
+    if (reply.type === "psp/zec-send-pending" && reply.payload.txids !== undefined && reply.payload.txids.length > 1) return { txids: reply.payload.txids };
+    return undefined;
+  }
+  function deliverResume(sessionRef: string, evidence: ZecSendResumeEvidence): void {
+    if (disposed) return;
+    if (session === undefined || session.sessionRef !== sessionRef) {
+      update({ message: "Send recorded; no open session to resume. Status stays the receipt." });
+      return;
+    }
+    try {
+      // The resume base is the VERBATIM session URL: its fragment carries the pane credential.
+      const resumeUrl = buildZecSendResumeUrl(session.sessionUrl, evidence);
+      if (onResumeLink) { onResumeLink(resumeUrl); return; }
+      if (state.pane !== null) update({ pane: { ...state.pane, url: resumeUrl }, message: "Resuming the pane with the wallet's evidence" });
+      else update({ message: "Send recorded; the pane is closed, so its evidence was not delivered. Status reconciles." });
+    } catch { update({ message: "Send recorded, but the resume link could not be delivered. Reopen the pane; status reconciles." }); }
+  }
+  function sessionOpenForSending(sessionRef: string): boolean {
+    return !disposed && !state.blocked && session !== undefined && session.sessionRef === sessionRef;
+  }
+  /** Deep-link handoff (draft codec): the same claim/journal semantics as the bridge path. */
+  async function runHandoff(sessionRef: string, request: SendRequest): Promise<void> {
+    // A restored session is not known to be alive until status says so; nothing reaches the wallet before that.
+    await refreshStatus();
+    if (!sessionOpenForSending(sessionRef) || statusUnreadable) {
+      update({ message: "Handoff refused: this session cannot send now. Nothing was sent; reconcile via status." });
+      return;
+    }
+    let previous;
+    try { previous = await sendStore.claim(sessionRef, request); }
+    catch { update({ message: "Handoff could not be journaled. Reconcile before proceeding." }); return; }
+    if (previous !== undefined) {
+      // A repeated link never reaches the wallet again; recorded evidence is handed back as is.
+      update({ message: `Handoff replayed for request ${request.requestId}; recorded outcome: ${previous.reply?.type ?? "in-progress"}. Never send again.` });
+      const recorded = previous.reply === undefined ? undefined : resumeEvidence(previous.reply);
+      if (recorded !== undefined) deliverResume(sessionRef, recorded);
+      return;
+    }
+    // The session can end while the claim is persisted: same gate, same recorded outcome as the bridge.
+    if (!sessionOpenForSending(sessionRef)) {
+      try {
+        await sendStore.complete(sessionRef, request, { v: 1, type: "psp/zec-send-cancel", sessionRef, payload: { requestId: request.requestId, reason: "wallet confirmation not started" } });
+        update({ message: "Handoff refused: this session ended before the wallet was asked. Nothing was sent; reconcile via status." });
+      } catch { update({ message: "Handoff refused, but its outcome could not be persisted. Reconcile before retrying." }); }
+      return;
+    }
+    const sheet = new AbortController();
+    openSheets.add(sheet);
+    let reply: HostToPaneMessage;
+    try { reply = buildZecSendReply(sessionRef, request.requestId, await wallet(request, { signal: sheet.signal })); }
+    // A wallet error may follow a broadcast: it stays pending, exactly as the bridge records it.
+    catch { reply = buildZecSendReply(sessionRef, request.requestId, undefined); }
+    finally { openSheets.delete(sheet); }
+    let persisted = true;
+    try { await sendStore.complete(sessionRef, request, reply); } catch { persisted = false; }
+    // Evidence still goes back when the journal failed: the pane can record it, and support needs it.
+    const evidence = resumeEvidence(reply);
+    if (evidence !== undefined) deliverResume(sessionRef, evidence);
+    if (!persisted) update({ message: "Send outcome could not be persisted. Reconcile before retrying; do not send again." });
+    else if (evidence === undefined) update({ message: "No transaction evidence to hand back; wallet history and status reconcile. Do not send again." });
   }
   return {
     initialize, close, refreshStatus,
@@ -139,10 +220,19 @@ export function createPartnerHost({ client, storage, transport, wallet, onState 
       try {
         const target = new URL(url);
         if (target.protocol !== "ramp-example:" || target.hostname !== "ramp") return;
+        if (target.searchParams.has("requestId")) {
+          // Pane → wallet handoff: a payment request for the native sheet, bound to the active session.
+          if (disposed || session === undefined || state.blocked) { update({ message: "Handoff ignored: no session open for sending. Reconcile via status." }); return; }
+          try {
+            const { sessionRef, ...request } = parseZecSendHandoffUrl(url, { sessionRef: session.sessionRef });
+            void runHandoff(sessionRef, request);
+          } catch { update({ message: "Handoff refused; nothing was sent. Status stays the receipt." }); }
+          return;
+        }
         const parsed = client.parseReturnUrl(url);
         if (session !== undefined && parsed.sessionRef === session.sessionRef) void refreshStatus();
       } catch { /* malformed/unrelated link */ }
     },
-    dispose() { disposed = true; close(); },
+    dispose() { disposed = true; for (const sheet of openSheets) sheet.abort(); close(); },
   };
 }
