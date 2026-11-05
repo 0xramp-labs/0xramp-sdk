@@ -8,6 +8,15 @@ All notable changes to this project are documented here. Format based on
 
 ### Added
 
+- Handoff link verification (draft): `ramp.verifyZecSendHandoff(url, { sessionRef })`
+  parses a pane → wallet link and returns `{ sessionRef, request, deadline }` only
+  if it is exactly the request 0xramp recorded for the session and the server calls
+  it sendable, read with the status ticket the pane never holds
+  (`ramp.getRecordedZecSendRequest`, `GET …/sessions/:sessionRef/send-request`).
+  New `HandoffRefused` error code and `ZecSendHandoffRefusedError` with `reason`
+  (`not-recorded`, `mismatch`, `answered`, `past-deadline`, `closed`); pure helpers
+  `matchZecSendHandoff` and `parseRecordedZecSendRequest`; draft vectors
+  `recorded.*.json`. Needs a deployment that serves the read.
 - `buildZecSendReply(sessionRef, requestId, outcome)` (root and
   `@0xramp/sdk/bridge`): the bridge's own mapping from a wallet outcome to the
   PSP-v1 reply, for hosts that serve handoff links themselves. A missing or
@@ -21,9 +30,10 @@ All notable changes to this project are documented here. Format based on
   through the same wallet-scoped journal as the bridge (`handleReturn` →
   `runHandoff`, new `sendStore` option, `onResumeLink` hook for the resume
   link) before falling back to `parseReturnUrl`. A link reaches the wallet only
-  after status is read and re-checked after the claim, as the bridge does; a
-  repeated link never reaches the wallet again and hands recorded evidence back;
-  terminal status aborts an open sheet. The web host example reports a handoff
+  after `verifyZecSendHandoff` matched it, before the journal is touched, and is
+  re-checked after the claim as the bridge does; a repeated link never reaches the
+  wallet again and hands recorded evidence back; terminal status and the verified
+  deadline abort an open sheet. The web host example reports a handoff
   link it cannot serve instead of treating it as a return, and routes its
   registered URL by exact origin and path instead of a query marker the
   registration rules refuse.
@@ -64,7 +74,7 @@ All notable changes to this project are documented here. Format based on
 - Browser-hosted pane contract: the partner guide §9, DESIGN, SPEC and README
   now describe what the pane implements for this mode — the send request is
   handed to the host on the registered return link (same `requestId` may be
-  offered again while unanswered; no QR/copy fallback), resume evidence is
+  offered again while no wallet reply is on record; no QR/copy fallback), resume evidence is
   taken back on the verbatim `sessionUrl`, and the pane returns once per
   terminal outcome (`settled`, `failed`, `cancelled`; `expired` never
   navigates) — instead of calling it planned pane-side work; partners confirm
@@ -72,10 +82,10 @@ All notable changes to this project are documented here. Format based on
   before `parseReturnUrl`, states the registered return URL must contain no
   `?`/`#` and stay within 1600 characters because it doubles as the handoff
   base, notes that an iOS auth-session sheet also closes on the handoff
-  navigation, and names the open item before a live pilot: the handoff link
-  carries no integrity binding, so the wallet-side cross-check of address and
-  amount must be agreed with 0xramp. Readiness gains the matching checklist
-  item and test-evidence row.
+  navigation, and requires `verifyZecSendHandoff` before the journal and the
+  native sheet. Readiness gains the matching checklist item and test-evidence
+  row. The docs no longer say the status ticket grants status and nothing more:
+  it also reads the recorded send request.
 - Partner guide corrections: the iOS initial-load attribution is fixed
   (CHANGELOG 0.0.1 recorded the iOS gap; the guide wrongly attributed it to
   Android — the create/restore origin lock already covers the initial load),

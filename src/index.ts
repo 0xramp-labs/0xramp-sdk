@@ -22,8 +22,8 @@ export type {
 export { parseReturnUrl } from "./session/returnUrl.js";
 export type { ParsedReturnUrl } from "./session/returnUrl.js";
 // DRAFT — unfrozen, pending partner confirmation (browser-hosted handoff codec).
-export { buildZecSendResumeUrl, parseZecSendHandoffUrl } from "./session/handoff.js";
-export type { ParsedZecSendHandoff, ZecSendResumeEvidence } from "./session/handoff.js";
+export { buildZecSendResumeUrl, matchZecSendHandoff, parseRecordedZecSendRequest, parseZecSendHandoffUrl } from "./session/handoff.js";
+export type { ParsedZecSendHandoff, RecordedZecSendRequest, VerifiedZecSendHandoff, ZecSendResumeEvidence } from "./session/handoff.js";
 export { PRODUCTION_API_BASE_URL } from "./session/environments.js";
 export type { SdkEnvironment } from "./session/environments.js";
 

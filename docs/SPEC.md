@@ -130,8 +130,20 @@ Rules enforced by the SDK bridge:
 **Draft — pending partner confirmation; the encoding may change.** For the
 browser-hosted mode, the SDK ships a draft deep-link handoff codec
 (root and `@0xramp/sdk/session`: `parseZecSendHandoffUrl`,
-`buildZecSendResumeUrl`):
+`buildZecSendResumeUrl`, `matchZecSendHandoff`):
 
+- `ramp.verifyZecSendHandoff(url, expected)` is the host's entry point: it
+  parses the link, reads the recorded request with the status ticket
+  (`ramp.getRecordedZecSendRequest`, `GET …/sessions/:sessionRef/send-request`,
+  which returns `{ request: null }` or `{ request, deadline, state }`) and returns
+  `{ sessionRef, request, deadline }` only if the link is exactly the recorded
+  request and `state` is `sendable`. `state` is the server's verdict, on its own
+  clock and financial session. Otherwise → `HandoffRefused` with `reason`
+  `not-recorded`, `mismatch`, `answered` (a wallet reply is on record),
+  `past-deadline` (at or within 30 s of the deadline) or `closed` (the route no
+  longer accepts this deposit, and any state this SDK does not know). Any failure
+  means nothing may be sent. Call it before `ZecSendStore.claim` and the native
+  sheet, and bound the sheet by the returned `deadline`.
 - `parseZecSendHandoffUrl(url, expected)` parses a pane → wallet handoff
   link (dedicated query params on the host's registered scheme: `sessionRef`,
   `requestId`, transparent `address`, canonical integer `amountZat`, optional
@@ -160,17 +172,15 @@ Draft, unfrozen, and excluded from the conformance set: draft vectors live in
 proves pane-side conformance** although the pane targets this encoding, and
 the encoding may change before it freezes.
 Deep links are advisory by design; the wallet's native confirmation sheet is
-the approval gate and the ticketed status endpoint stays authoritative. The
-handoff link has no integrity binding yet: the wallet-side cross-check of its
-address and amount must be agreed before a live pilot (partner guide section 9).
+the approval gate and the ticketed status endpoint stays authoritative.
 
 ## Amounts, errors & security posture
 
 - **Amounts.** All money values are canonical decimal strings or integer-unit strings (`amountZat`: zatoshi, 10⁻⁸ ZEC). Never floats. Fiat/USDC legs use 6-decimal units.
-- **Errors.** A stable enum: `UnsupportedProtocolVersion`, `OriginLockViolation`, `SessionMismatch`, `SchemaViolation`, `PartnerQuotaExceeded`, `NetworkUnavailable`, …
+- **Errors.** A stable enum: `UnsupportedProtocolVersion`, `OriginLockViolation`, `SessionMismatch`, `SchemaViolation`, `PartnerQuotaExceeded`, `NetworkUnavailable`, `HandoffRefused`, …
 - **Advisory results.** Never make an irreversible decision on bridge or deep-link data. Authoritative signals: the ticketed status endpoint (`getStatus`) and your own view of the Zcash chain. Return deep-links are spoofable by design.
 - **Origin lock.** Lock WebView navigation to 0xramp origins and never obscure the origin. RN WebView `postMessage` carries no origin — messages are only accepted while the navigation-lock invariant holds (checklists in the partner guide).
-- **Redaction.** The SDK logger redacts `statusTicket` and hashes/omits `sessionRef`. Treat the `sessionRef + statusTicket` pair as bearer data: it grants read-only status, nothing more.
+- **Redaction.** The SDK logger redacts `statusTicket` and hashes/omits `sessionRef`. Treat the `sessionRef + statusTicket` pair as bearer data: it grants read-only access to the session status and to the recorded send request (deposit address, exact amount, request id, deadline) until retention ends. Keep it on the device or handle it like payment data.
 - **No secrets in the SDK.** `partnerId` is public. The SDK never holds keys, never signs, and never sees payout-key material (Pix/UPI keys are encrypted inside `0xramp.app`, end to end).
 
 ## Conformance

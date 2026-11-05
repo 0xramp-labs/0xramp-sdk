@@ -1,0 +1,23 @@
+{
+  "kind": "draft.zec-send-recorded",
+  "name": "route-no-longer-accepts-the-deposit",
+  "data": {
+    "url": "zingo://0xramp?sessionRef=sessGOLDEN00000001&requestId=reqGOLDEN00000001&address=t1FakeAddrForFixtures9zqqqqqqqqqqqqq&amountZat=5000000",
+    "parse": {
+      "sessionRef": "sessGOLDEN00000001"
+    },
+    "recorded": {
+      "request": {
+        "requestId": "reqGOLDEN00000001",
+        "address": "t1FakeAddrForFixtures9zqqqqqqqqqqqqq",
+        "amountZat": "5000000"
+      },
+      "deadline": "2026-11-05T13:00:00.000Z",
+      "state": "closed"
+    },
+    "expected": {
+      "error": "HandoffRefused",
+      "reason": "closed"
+    }
+  }
+}

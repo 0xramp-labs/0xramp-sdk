@@ -42,6 +42,13 @@ import {
 } from "../bridge/bridge.js";
 import { isAllowedPaneNavigation } from "../bridge/origin.js";
 import type { ZecSendStore } from "../bridge/sendStore.js";
+import {
+  matchZecSendHandoff,
+  parseRecordedZecSendRequest,
+  parseZecSendHandoffUrl,
+  type RecordedZecSendRequest,
+  type VerifiedZecSendHandoff,
+} from "./handoff.js";
 import { parseReturnUrl, type ParsedReturnUrl } from "./returnUrl.js";
 import { PARTNER_SESSIONS_PATH, resolveApiBaseUrl, type SdkEnvironment } from "./environments.js";
 export { parseReturnUrl };
@@ -125,7 +132,7 @@ export interface RampSession {
   /** Load this URL in your WebView with navigation locked to 0xramp origins. */
   sessionUrl: string;
   sessionRef: string;
-  /** Bearer for the read-only status endpoint. Treat as sensitive; never log raw. */
+  /** Bearer for the read-only status and recorded-request endpoints (deposit address and amount included). Treat as sensitive; never log raw. */
   statusTicket: string;
   /** ISO 8601 expiry of the session create offer. */
   expiresAt: string;
@@ -171,6 +178,15 @@ export interface RampClient {
   attachPaneBridge(options: AttachPaneBridgeOptions): PaneBridge;
   /** Channel 5 — parse a return deep-link. Advisory only. */
   parseReturnUrl(url: string): ParsedReturnUrl;
+  /** DRAFT — the send request 0xramp recorded for this session, read with the status ticket. */
+  getRecordedZecSendRequest(sessionRef: string, options?: GetStatusOptions): Promise<RecordedZecSendRequest>;
+  /**
+   * DRAFT — parse a handoff link and refuse it unless it is the recorded request
+   * and the server calls it sendable. Call before the send journal and the native
+   * sheet: deep links are spoofable. Any failure, including a failed read, means
+   * nothing may be sent.
+   */
+  verifyZecSendHandoff(url: string, expected: { sessionRef: string }, options?: GetStatusOptions): Promise<VerifiedZecSendHandoff>;
 }
 
 interface StoredSession {
@@ -269,6 +285,35 @@ export function createRampClient(config: RampClientConfig): RampClient {
     } finally { clearTimeout(timer); }
   }
 
+  function ticketFor(sessionRef: string, options?: GetStatusOptions): string {
+    const ticket = options?.statusTicket ?? sessions.get(sessionRef)?.statusTicket;
+    if (ticket === undefined) {
+      throw new PspError(
+        "ConfigError",
+        "no status ticket available for this sessionRef — pass one via options.statusTicket",
+      );
+    }
+    if (!sessionRefSchema.safeParse(sessionRef).success || !statusTicketSchema.safeParse(ticket).success) {
+      throw new ConfigError("invalid session reference or status ticket");
+    }
+    return ticket;
+  }
+
+  async function getRecordedZecSendRequest(sessionRef: string, options?: GetStatusOptions): Promise<RecordedZecSendRequest> {
+    const ticket = ticketFor(sessionRef, options);
+    const recorded = await request<RecordedZecSendRequest>(
+      `${PARTNER_SESSIONS_PATH}/${encodeURIComponent(sessionRef)}/send-request`,
+      { method: "GET", authTicket: ticket },
+      (body) => parseRecordedZecSendRequest(body, sessionRef),
+    );
+    logger?.debug?.("partner recorded send request", {
+      sessionRef: redactSessionRef(sessionRef),
+      ticket: redactStatusTicket(ticket),
+      recorded: recorded.request !== null,
+    });
+    return recorded;
+  }
+
   return {
     async createSession(input: CreateSessionInput): Promise<RampSession> {
       if (input.idempotencyKey !== undefined && (typeof input.idempotencyKey !== "string" || !/^[A-Za-z0-9_-]{32,128}$/.test(input.idempotencyKey))) {
@@ -309,16 +354,7 @@ export function createRampClient(config: RampClientConfig): RampClient {
     isAllowedPaneUrl,
 
     async getStatus(sessionRef: string, options?: GetStatusOptions): Promise<SessionStatus> {
-      const ticket = options?.statusTicket ?? sessions.get(sessionRef)?.statusTicket;
-      if (ticket === undefined) {
-        throw new PspError(
-          "ConfigError",
-          "no status ticket available for this sessionRef — pass one via options.statusTicket",
-        );
-      }
-      if (!sessionRefSchema.safeParse(sessionRef).success || !statusTicketSchema.safeParse(ticket).success) {
-        throw new ConfigError("invalid session reference or status ticket");
-      }
+      const ticket = ticketFor(sessionRef, options);
       const res = await request<SessionStatusResponseBody>(
         `${PARTNER_SESSIONS_PATH}/${encodeURIComponent(sessionRef)}`,
         { method: "GET", authTicket: ticket },
@@ -357,6 +393,13 @@ export function createRampClient(config: RampClientConfig): RampClient {
 
     parseReturnUrl(url: string): ParsedReturnUrl {
       return parseReturnUrl(url);
+    },
+
+    getRecordedZecSendRequest,
+
+    async verifyZecSendHandoff(url: string, expected: { sessionRef: string }, options?: GetStatusOptions): Promise<VerifiedZecSendHandoff> {
+      const handoff = parseZecSendHandoffUrl(url, expected);
+      return matchZecSendHandoff(handoff, await getRecordedZecSendRequest(expected.sessionRef, options));
     },
   };
 }

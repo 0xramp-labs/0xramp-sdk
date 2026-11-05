@@ -41,7 +41,7 @@ install or launch Expo, React Native or Electron.
 | Multiple transaction IDs and ambiguous broadcast failures | Synthetic wallet outputs |
 | Exact custom origins, invalid ready binding, restored tickets, network deadlines | SDK unit tests |
 | Advisory settlement/deep-link claims trigger ticketed status lookup | Mocked authoritative API |
-| Handoff links routed by `requestId`, journaled exactly once on replay, resume link built from the verbatim session URL | Host-controller simulation (React Native example tests) |
+| Handoff links routed by `requestId`, refused unless they match the recorded request, journaled exactly once on replay, resume link built from the verbatim session URL | Host-controller simulation (React Native example tests) |
 
 ## Pilot money parameters
 
@@ -72,9 +72,9 @@ install or launch Expo, React Native or Electron.
   app routes links by `requestId` before treating them as returns, reopens the
   verbatim `sessionUrl` with the evidence, dedupes a repeated handoff link by
   request id, the launch of your scheme from the pane works on the target
-  browsers (Android Chrome/Custom Tabs, iOS auth-session), and the wallet-side
-  cross-check of a handoff's address and amount is agreed with 0xramp (partner
-  guide section 9).
+  browsers (Android Chrome/Custom Tabs, iOS auth-session), and every handoff
+  link passes `verifyZecSendHandoff` before your journal and your native sheet
+  (partner guide section 9).
 - [ ] Lost create responses have a server-supported reconciliation procedure:
   on idempotency-enabled deployments (the issued staging Partner API is one),
   the persisted `idempotencyKey` with the identical body returns the identical

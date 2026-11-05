@@ -18,14 +18,16 @@ function harness() {
   let terminal = false;
   let nextSession = session;
   const sent: HostToPaneMessage[] = [];
-  const fetchMock = vi.fn(async (_url, init) => json(init.method === "POST" ? nextSession : { outcome, terminal, updatedAt: "2026-09-22T12:00:00Z" }));
+  // The request 0xramp recorded for the session; a test names the one the pane would have issued.
+  let recorded: unknown = { request: null };
+  const fetchMock = vi.fn(async (url, init) => json(init.method === "POST" ? nextSession : String(url).endsWith("/send-request") ? recorded : { outcome, terminal, updatedAt: "2026-09-22T12:00:00Z" }));
   const store = createMemoryZecSendStore();
   const wallet = vi.fn<NonNullable<PaneBridgeHandlers["onZecSendRequest"]>>(() => ({ txid: "a".repeat(64) }));
   const transport = { post: (message: HostToPaneMessage) => sent.push(message), subscribe: (handler: (raw: unknown) => void) => { listener = handler; return () => { if (listener === handler) listener = undefined; }; } };
   const storage = { read: async () => saved, write: async (value: string | null) => { saved = value; } };
   const resumes: string[] = [];
   const make = () => createPartnerHost({ client: createRampClient({ environment: "production", partnerId: "example", fetch: fetchMock as unknown as typeof fetch, sendStore: store }), transport, storage, wallet, sendStore: store, onResumeLink: url => { resumes.push(url); }, onState: value => { state = value; } });
-  return { make, wallet, fetchMock, sent, storage, store, resumes: () => resumes, state: () => state!, saved: () => saved, listening: () => listener !== undefined, emit: (raw: unknown) => listener?.(raw), status: (value: string, done: boolean) => { outcome = value; terminal = done; }, next: (value: typeof session) => { nextSession = value; } };
+  return { make, wallet, fetchMock, sent, storage, store, record: (requestId: string, recordedState = "sendable", deadline = "2099-01-01T00:00:00Z") => { recorded = { request: { requestId, address: "t1FakeAddrForFixtures9zqqqqqqqqqqqqq", amountZat: "5000000" }, deadline, state: recordedState }; }, resumes: () => resumes, state: () => state!, saved: () => saved, listening: () => listener !== undefined, emit: (raw: unknown) => listener?.(raw), status: (value: string, done: boolean) => { outcome = value; terminal = done; }, next: (value: typeof session) => { nextSession = value; } };
 }
 
 describe("simulated partner integration", () => {
@@ -69,7 +71,7 @@ describe("simulated partner integration", () => {
   });
 
   it("routes a handoff link on the registered scheme through the shared journal once and prepares the resume link", async () => {
-    const h = harness(); const host = h.make(); await host.start(input);
+    const h = harness(); h.record("reqGOLDEN00000002"); const host = h.make(); await host.start(input);
     const query = `sessionRef=${ref}&requestId=reqGOLDEN00000002&address=t1FakeAddrForFixtures9zqqqqqqqqqqqqq&amountZat=5000000`;
     host.handleReturn(`ramp-example://ramp?${query}`); await flush();
     expect(h.wallet).toHaveBeenCalledOnce();
@@ -84,7 +86,7 @@ describe("simulated partner integration", () => {
     expect(h.wallet).toHaveBeenCalledOnce(); expect(h.state().active).toBe(true); host.dispose();
   });
   it("journals a declined handoff without a resume link and never asks the wallet again", async () => {
-    const h = harness(); h.wallet.mockImplementationOnce(() => ({ cancel: true, reason: "user declined" }));
+    const h = harness(); h.record("reqGOLDEN00000003"); h.wallet.mockImplementationOnce(() => ({ cancel: true, reason: "user declined" }));
     const host = h.make(); await host.start(input);
     const link = `ramp-example://ramp?sessionRef=${ref}&requestId=reqGOLDEN00000003&address=t1FakeAddrForFixtures9zqqqqqqqqqqqqq&amountZat=5000000`;
     host.handleReturn(link); await flush();
@@ -94,7 +96,7 @@ describe("simulated partner integration", () => {
   const handoffRequest = (id: string) => ({ requestId: id, address: "t1FakeAddrForFixtures9zqqqqqqqqqqqqq", amountZat: "5000000" });
   const handoffLink = (id: string) => `ramp-example://ramp?sessionRef=${ref}&requestId=${id}&address=t1FakeAddrForFixtures9zqqqqqqqqqqqqq&amountZat=5000000`;
   it("hands several broadcast transactions back as evidence instead of dropping them", async () => {
-    const h = harness(); const [a, b] = ["a".repeat(64), "b".repeat(64)];
+    const h = harness(); h.record("reqGOLDEN00000004"); const [a, b] = ["a".repeat(64), "b".repeat(64)];
     h.wallet.mockImplementationOnce(() => ({ txids: [a, b] }));
     const host = h.make(); await host.start(input);
     host.handleReturn(handoffLink("reqGOLDEN00000004")); await flush();
@@ -107,7 +109,7 @@ describe("simulated partner integration", () => {
     ["an inconsistent outcome", { txid: "a".repeat(64), txids: ["b".repeat(64)] }, "multiple-transactions"],
     ["an unresolved send with one ID", { pending: true as const, txids: ["a".repeat(64)] }, "broadcast-unknown"],
   ])("journals %s as pending and does not let the pane read it as the deposit", async (_name, outcome, reason) => {
-    const h = harness(); h.wallet.mockImplementationOnce(() => outcome);
+    const h = harness(); h.record("reqGOLDEN00000005"); h.wallet.mockImplementationOnce(() => outcome);
     const host = h.make(); await host.start(input);
     host.handleReturn(handoffLink("reqGOLDEN00000005")); await flush();
     const recorded = await h.store.claim(ref, handoffRequest("reqGOLDEN00000005"));
@@ -116,7 +118,7 @@ describe("simulated partner integration", () => {
     host.dispose();
   });
   it("records a throwing wallet as an unknown broadcast and never asks it again", async () => {
-    const h = harness(); h.wallet.mockImplementationOnce(() => { throw new Error("wallet core failed after signing"); });
+    const h = harness(); h.record("reqGOLDEN00000006"); h.wallet.mockImplementationOnce(() => { throw new Error("wallet core failed after signing"); });
     const host = h.make(); await host.start(input);
     host.handleReturn(handoffLink("reqGOLDEN00000006")); await flush();
     const recorded = await h.store.claim(ref, handoffRequest("reqGOLDEN00000006"));
@@ -133,24 +135,74 @@ describe("simulated partner integration", () => {
     expect(h.wallet).not.toHaveBeenCalled(); expect(h.state().message).toContain("Handoff ignored");
     host.dispose();
   });
-  it("reads status before a restored session reaches the wallet", async () => {
+  it("takes the server's verdict for a restored session before the wallet", async () => {
     const h = harness(); await h.storage.write(JSON.stringify({ state: "active", session }));
-    h.status("expired", false);
+    h.record("reqGOLDEN00000008", "past-deadline");
     const host = h.make(); await host.initialize();
     expect(h.state().blocked).toBe(false);
     host.handleReturn(handoffLink("reqGOLDEN00000008")); await flush();
-    expect(h.wallet).not.toHaveBeenCalled(); expect(h.state().message).toContain("Handoff refused");
+    expect(h.wallet).not.toHaveBeenCalled(); expect(h.state().message).toContain("This link did nothing");
     host.dispose();
   });
-  it("refuses a handoff when status cannot be read", async () => {
+  it("refuses junk and other sessions' links without a network read", async () => {
     const h = harness(); const host = h.make(); await host.start(input);
+    const reads = h.fetchMock.mock.calls.length;
+    host.handleReturn(handoffLink("reqGOLDEN00000009").replace(ref, "sessOTHER000000001")); await flush();
+    host.handleReturn(`ramp-example://ramp?requestId=x`); await flush();
+    expect(h.fetchMock.mock.calls.length).toBe(reads); expect(h.wallet).not.toHaveBeenCalled();
+    host.dispose();
+  });
+  it.each([
+    ["a forged address", "reqGOLDEN00000013", (link: string) => link.replace("t1FakeAddrForFixtures9zqqqqqqqqqqqqq", "t1ForgedAddrForFixtures9zqqqqqqqqqqq"), "sendable"],
+    ["a forged amount", "reqGOLDEN00000014", (link: string) => link.replace("amountZat=5000000", "amountZat=5000001"), "sendable"],
+    ["a request 0xramp never recorded", "reqGOLDEN00000015", (link: string) => link.replace("reqGOLDEN00000015", "reqFORGED000000001"), "sendable"],
+    ["a route that no longer accepts the deposit", "reqGOLDEN00000018", (link: string) => link, "closed"],
+    ["a request past its deadline", "reqGOLDEN00000019", (link: string) => link, "past-deadline"],
+  ])("refuses %s before the wallet and before the journal, without claiming nothing was sent", async (_name, id, tamper, recordedState) => {
+    const h = harness(); h.record(id, recordedState);
+    const claim = vi.spyOn(h.store, "claim");
+    const host = h.make(); await host.start(input);
+    host.handleReturn(tamper(handoffLink(id))); await flush();
+    expect(h.wallet).not.toHaveBeenCalled(); expect(claim).not.toHaveBeenCalled(); expect(h.resumes()).toHaveLength(0);
+    expect(h.state().message).toContain("do not send again"); expect(h.state().message).not.toContain("Nothing was sent");
+    host.dispose();
+  });
+  it("says a repeated link was already answered once the server holds the reply, after a real send", async () => {
+    const h = harness(); h.record("reqGOLDEN00000016");
+    const host = h.make(); await host.start(input);
+    host.handleReturn(handoffLink("reqGOLDEN00000016")); await flush();
+    expect(h.wallet).toHaveBeenCalledOnce();
+    h.record("reqGOLDEN00000016", "answered");
+    host.handleReturn(handoffLink("reqGOLDEN00000016")); await flush();
+    expect(h.wallet).toHaveBeenCalledOnce();
+    expect(h.state().message).toContain("already answered"); expect(h.state().message).not.toContain("Nothing was sent");
+    host.dispose();
+  });
+  it("refuses a handoff when the recorded request cannot be read", async () => {
+    const h = harness(); h.record("reqGOLDEN00000017");
+    const host = h.make(); await host.start(input);
+    const ordinary = h.fetchMock.getMockImplementation()!;
+    h.fetchMock.mockImplementation(async (url, init) => String(url).endsWith("/send-request") ? json({ error: "unavailable" }) : ordinary(url, init));
+    host.handleReturn(handoffLink("reqGOLDEN00000017")); await flush();
+    expect(h.wallet).not.toHaveBeenCalled(); expect(h.state().message).toContain("do not send again");
     h.fetchMock.mockRejectedValueOnce(new Error("offline"));
-    host.handleReturn(handoffLink("reqGOLDEN00000009")); await flush();
-    expect(h.wallet).not.toHaveBeenCalled(); expect(h.state().message).toContain("Handoff refused");
+    host.handleReturn(handoffLink("reqGOLDEN00000017")); await flush();
+    expect(h.wallet).not.toHaveBeenCalled();
+    host.dispose();
+  });
+  it("aborts an open wallet sheet at the deadline, since status will not end a recorded request", async () => {
+    const h = harness(); h.record("reqGOLDEN00000020", "sendable", new Date(Date.now() + 30_040).toISOString());
+    let signal: AbortSignal | undefined;
+    h.wallet.mockImplementation((_request, context) => { signal = context.signal; return new Promise(() => {}); });
+    const host = h.make(); await host.start(input);
+    host.handleReturn(handoffLink("reqGOLDEN00000020")); await flush();
+    expect(signal?.aborted).toBe(false);
+    await new Promise(resolve => setTimeout(resolve, 120));
+    expect(signal?.aborted).toBe(true);
     host.dispose();
   });
   it("re-checks after the claim, records that the wallet was not asked, and never asks it", async () => {
-    const h = harness();
+    const h = harness(); h.record("reqGOLDEN00000010");
     let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
     const claim = h.store.claim.bind(h.store);
     h.store.claim = async (sessionRef, request) => { const previous = await claim(sessionRef, request); await gate; return previous; };
@@ -165,7 +217,7 @@ describe("simulated partner integration", () => {
     host.dispose();
   });
   it("aborts an open wallet sheet on terminal status, but not when the pane closes or the status is reversible", async () => {
-    const h = harness(); let signal: AbortSignal | undefined;
+    const h = harness(); h.record("reqGOLDEN00000011"); let signal: AbortSignal | undefined;
     h.wallet.mockImplementation((_request, context) => { signal = context.signal; return new Promise(() => {}); });
     const host = h.make(); await host.start(input);
     host.handleReturn(handoffLink("reqGOLDEN00000011")); await flush();
@@ -176,7 +228,7 @@ describe("simulated partner integration", () => {
     host.dispose();
   });
   it("still hands evidence back when the journal cannot record the outcome", async () => {
-    const h = harness();
+    const h = harness(); h.record("reqGOLDEN00000012");
     const complete = h.store.complete.bind(h.store);
     h.store.complete = async () => { throw new Error("storage unavailable"); };
     const host = h.make(); await host.start(input);

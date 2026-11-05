@@ -4,6 +4,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { ZecSendHandoffRefusedError } from "../protocol/errors.js";
 import { createRampClient, type RampClientConfig } from "./client.js";
 
 const SESSION_RESPONSE = {
@@ -33,6 +34,76 @@ function makeConfig(fetchMock: ReturnType<typeof vi.fn>, overrides: Partial<Ramp
 afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
+});
+
+describe("verifyZecSendHandoff (the wallet's check before its confirmation sheet)", () => {
+  const ref = SESSION_RESPONSE.sessionRef;
+  const request = { requestId: "reqGOLDEN00000001", address: "t1FakeAddrForFixtures9zqqqqqqqqqqqqq", amountZat: "5000000" };
+  const link = `zingo://0xramp?sessionRef=${ref}&requestId=${request.requestId}&address=${request.address}&amountZat=${request.amountZat}`;
+  const deadline = "2099-01-01T00:00:00Z";
+  async function client(record: unknown, status = 200) {
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => init.method === "POST" ? jsonResponse(201, SESSION_RESPONSE) : jsonResponse(status, record));
+    const ramp = createRampClient(makeConfig(fetchMock as unknown as ReturnType<typeof vi.fn>));
+    await ramp.createSession({ direction: "sell", asset: "ZEC", fiat: "BRL" });
+    return { ramp, fetchMock };
+  }
+  const reasonOf = async (run: Promise<unknown>) => run.then(() => "resolved", (error: ZecSendHandoffRefusedError) => error.code === "HandoffRefused" ? error.reason : error.code);
+
+  it("reads the recorded request with the status ticket and returns the link's request when they match", async () => {
+    const { ramp, fetchMock } = await client({ request, deadline, state: "sendable" });
+    await expect(ramp.verifyZecSendHandoff(link, { sessionRef: ref })).resolves.toEqual({ sessionRef: ref, request, deadline });
+    const [url, init] = fetchMock.mock.calls.at(-1)!;
+    expect(url).toBe(`https://0xramp.app/api/partner/v0/sessions/${ref}/send-request`);
+    expect(init.method).toBe("GET");
+    expect((init.headers as Record<string, string>)["authorization"]).toBe(`PartnerTicket v1.${SESSION_RESPONSE.statusTicket}`);
+  });
+  it.each([
+    ["a forged address", link.replace(request.address, "t1ForgedAddrForFixtures9zqqqqqqqqqqqq"), { request, deadline, state: "sendable" }, "mismatch"],
+    ["a forged amount", link.replace("amountZat=5000000", "amountZat=5000001"), { request, deadline, state: "sendable" }, "mismatch"],
+    ["a forged request id", link.replace(request.requestId, "reqFORGED000000001"), { request, deadline, state: "sendable" }, "mismatch"],
+    ["a memo the request does not carry", `${link}&memo=pay%20me`, { request, deadline, state: "sendable" }, "mismatch"],
+    ["a session with no recorded request", link, { request: null }, "not-recorded"],
+    ["a request already answered", link, { request, deadline, state: "answered" }, "answered"],
+    ["a request the server calls past its deadline", link, { request, deadline, state: "past-deadline" }, "past-deadline"],
+    ["a route that no longer accepts the deposit", link, { request, deadline, state: "closed" }, "closed"],
+    ["a state this SDK does not know", link, { request, deadline, state: "something-new" }, "closed"],
+  ])("refuses %s", async (_name, url, record, reason) => {
+    const { ramp } = await client(record);
+    expect(await reasonOf(ramp.verifyZecSendHandoff(url, { sessionRef: ref }))).toBe(reason);
+  });
+  it("fails closed when the record cannot be read or trusted, and never treats that as a match", async () => {
+    expect(await reasonOf((await client({}, 401)).ramp.verifyZecSendHandoff(link, { sessionRef: ref }))).toBe("ApiError");
+    expect(await reasonOf((await client({ request: { ...request, amountZat: "1.5" }, deadline, state: "sendable" })).ramp.verifyZecSendHandoff(link, { sessionRef: ref }))).toBe("SchemaViolation");
+    expect(await reasonOf((await client({ request, deadline: "soon", state: "sendable" })).ramp.verifyZecSendHandoff(link, { sessionRef: ref }))).toBe("SchemaViolation");
+    expect(await reasonOf((await client({ request, deadline })).ramp.verifyZecSendHandoff(link, { sessionRef: ref }))).toBe("SchemaViolation");
+    expect(await reasonOf((await client({})).ramp.verifyZecSendHandoff(link, { sessionRef: ref }))).toBe("SchemaViolation");
+    const offline = await client({ request: null });
+    offline.fetchMock.mockRejectedValueOnce(new Error("offline"));
+    expect(await reasonOf(offline.ramp.verifyZecSendHandoff(link, { sessionRef: ref }))).toBe("NetworkUnavailable");
+  });
+  it("binds the link to the expected session before any network read", async () => {
+    const { ramp, fetchMock } = await client({ request: null });
+    const calls = fetchMock.mock.calls.length;
+    expect(await reasonOf(ramp.verifyZecSendHandoff(link, { sessionRef: "sessOTHER000000001" }))).toBe("SessionMismatch");
+    expect(fetchMock.mock.calls.length).toBe(calls);
+  });
+  it("needs the session's ticket, and keeps the ticket and the session out of errors and logs", async () => {
+    const ramp = createRampClient(makeConfig(vi.fn()));
+    expect(await reasonOf(ramp.verifyZecSendHandoff(link, { sessionRef: ref }))).toBe("ConfigError");
+    const logs: unknown[] = [];
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => init.method === "POST" ? jsonResponse(201, SESSION_RESPONSE) : jsonResponse(500, {}));
+    const logged = createRampClient(makeConfig(fetchMock as unknown as ReturnType<typeof vi.fn>, { logger: { debug: (...args: unknown[]) => logs.push(args), info: (...args: unknown[]) => logs.push(args) } as RampClientConfig["logger"] }));
+    await logged.createSession({ direction: "sell", asset: "ZEC", fiat: "BRL" });
+    const error = await logged.verifyZecSendHandoff(link, { sessionRef: ref }).catch((cause: Error) => cause);
+    expect((error as Error).message).not.toContain(ref);
+    expect(JSON.stringify(logs)).not.toContain(SESSION_RESPONSE.statusTicket);
+    expect(JSON.stringify(logs)).not.toContain(request.address);
+  });
+  it("accepts an explicit ticket for a restored wallet", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(200, { request, deadline, state: "sendable" }));
+    const ramp = createRampClient(makeConfig(fetchMock as unknown as ReturnType<typeof vi.fn>));
+    await expect(ramp.verifyZecSendHandoff(link, { sessionRef: ref }, { statusTicket: SESSION_RESPONSE.statusTicket })).resolves.toMatchObject({ request });
+  });
 });
 
 describe("createRampClient", () => {

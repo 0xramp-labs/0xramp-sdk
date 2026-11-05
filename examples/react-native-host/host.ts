@@ -1,8 +1,6 @@
 /** Platform-independent lifecycle used by App.tsx and the opt-in partner simulation. */
-import { buildZecSendReply, buildZecSendResumeUrl, parseZecSendHandoffUrl } from "@0xramp/sdk";
-import type { CreateSessionInput, HostToPaneMessage, PaneBridge, PaneBridgeHandlers, PaneTransport, RampClient, RampSession, ZecSendResumeEvidence, ZecSendStore } from "@0xramp/sdk";
-
-type SendRequest = Parameters<NonNullable<PaneBridgeHandlers["onZecSendRequest"]>>[0];
+import { buildZecSendReply, buildZecSendResumeUrl, ZecSendHandoffRefusedError } from "@0xramp/sdk";
+import type { CreateSessionInput, HostToPaneMessage, PaneBridge, PaneBridgeHandlers, PaneTransport, RampClient, RampSession, VerifiedZecSendHandoff, ZecSendResumeEvidence, ZecSendStore } from "@0xramp/sdk";
 
 export interface SessionStorage {
   read(): Promise<string | null>;
@@ -37,7 +35,6 @@ export function createPartnerHost({ client, storage, transport, wallet, sendStor
   // Native sheets a handoff has open. Status can end the session under them; closing the pane cannot,
   // because in browser-hosted mode the pane leaves on purpose at the handoff.
   const openSheets = new Set<AbortController>();
-  let statusUnreadable = false;
   let state: HostState = { message: "Loading saved session", active: false, blocked: true, pane: null };
 
   function update(patch: Partial<HostState>) {
@@ -82,7 +79,6 @@ export function createPartnerHost({ client, storage, transport, wallet, sendStor
     statusRequest = (async () => {
       try {
         const status = await client.getStatus(current.sessionRef);
-        statusUnreadable = false;
         if (disposed || session !== current) return;
         if (status.outcome === "expired") {
           // Expiry is reversible in PSP-v1; late deposits still need recovery.
@@ -98,7 +94,6 @@ export function createPartnerHost({ client, storage, transport, wallet, sendStor
           update({ active: false, blocked: false, message: `Authoritative status: ${status.outcome}` });
         } else update({ message: `Authoritative status: ${status.outcome}` });
       } catch {
-        statusUnreadable = true;
         update({ message: "Status unavailable. Keep the saved session; do not send again." });
       }
     })().finally(() => { statusRequest = undefined; });
@@ -151,13 +146,19 @@ export function createPartnerHost({ client, storage, transport, wallet, sendStor
     return !disposed && !state.blocked && session !== undefined && session.sessionRef === sessionRef;
   }
   /** Deep-link handoff (draft codec): the same claim/journal semantics as the bridge path. */
-  async function runHandoff(sessionRef: string, request: SendRequest): Promise<void> {
-    // A restored session is not known to be alive until status says so; nothing reaches the wallet before that.
-    await refreshStatus();
-    if (!sessionOpenForSending(sessionRef) || statusUnreadable) {
-      update({ message: "Handoff refused: this session cannot send now. Nothing was sent; reconcile via status." });
+  async function runHandoff(url: string, sessionRef: string): Promise<void> {
+    // Deep links are spoofable: only the request 0xramp recorded for this session gets past here, and
+    // only while the server calls it sendable, which also covers a restored session. This runs before
+    // the journal, so a forged link leaves no trace in it. It cannot say whether anything was sent.
+    let verified: VerifiedZecSendHandoff;
+    try { verified = await client.verifyZecSendHandoff(url, { sessionRef }); }
+    catch (error) {
+      update({ message: error instanceof ZecSendHandoffRefusedError && error.reason === "answered"
+        ? "This request was already answered. Check wallet history and status; do not send again."
+        : "This link did nothing. Check status; if you already confirmed a send, do not send again." });
       return;
     }
+    const { request, deadline } = verified;
     let previous;
     try { previous = await sendStore.claim(sessionRef, request); }
     catch { update({ message: "Handoff could not be journaled. Reconcile before proceeding." }); return; }
@@ -178,11 +179,14 @@ export function createPartnerHost({ client, storage, transport, wallet, sendStor
     }
     const sheet = new AbortController();
     openSheets.add(sheet);
+    // Status will not end a recorded request, so the sheet must not outlive its deadline.
+    const expiry = setTimeout(() => sheet.abort(), Math.min(Math.max(0, Date.parse(deadline) - Date.now() - 30_000), 2 ** 31 - 1));
+    sheet.signal.addEventListener("abort", () => clearTimeout(expiry), { once: true });
     let reply: HostToPaneMessage;
     try { reply = buildZecSendReply(sessionRef, request.requestId, await wallet(request, { signal: sheet.signal })); }
     // A wallet error may follow a broadcast: it stays pending, exactly as the bridge records it.
     catch { reply = buildZecSendReply(sessionRef, request.requestId, undefined); }
-    finally { openSheets.delete(sheet); }
+    finally { clearTimeout(expiry); openSheets.delete(sheet); }
     let persisted = true;
     try { await sendStore.complete(sessionRef, request, reply); } catch { persisted = false; }
     // Evidence still goes back when the journal failed: the pane can record it, and support needs it.
@@ -223,10 +227,7 @@ export function createPartnerHost({ client, storage, transport, wallet, sendStor
         if (target.searchParams.has("requestId")) {
           // Pane → wallet handoff: a payment request for the native sheet, bound to the active session.
           if (disposed || session === undefined || state.blocked) { update({ message: "Handoff ignored: no session open for sending. Reconcile via status." }); return; }
-          try {
-            const { sessionRef, ...request } = parseZecSendHandoffUrl(url, { sessionRef: session.sessionRef });
-            void runHandoff(sessionRef, request);
-          } catch { update({ message: "Handoff refused; nothing was sent. Status stays the receipt." }); }
+          void runHandoff(url, session.sessionRef);
           return;
         }
         const parsed = client.parseReturnUrl(url);

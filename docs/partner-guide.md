@@ -203,9 +203,9 @@ interface CreateSessionInput {
 
 ```ts
 interface RampSession {
-  sessionUrl: string;    // load this in the WebView (may be ticket-bearing)
+  sessionUrl: string;    // load this in the WebView (its fragment carries the pane credential)
   sessionRef: string;    // session identity on the bridge and status calls
-  statusTicket: string;  // bearer for the read-only status endpoint — never log raw
+  statusTicket: string;  // bearer for the read-only status and recorded-request reads — never log raw
   expiresAt: string;     // ISO 8601 expiry of the create offer
 }
 ```
@@ -478,8 +478,10 @@ interface ParsedReturnUrl {
 | Full `RampSession` (`sessionUrl`, `sessionRef`, `statusTicket`, `expiresAt`) | secure session storage | restart/resume without re-creating |
 | Send journal records | `sendStore` adapter over wallet secure storage | exactly-once sends and recovery |
 
-Treat the `sessionRef + statusTicket` pair as bearer data: it grants
-read-only status, nothing more. SDK logs redact the ticket and hash the
+Treat the `sessionRef + statusTicket` pair as bearer data: it grants read-only
+access to the session status and to the recorded send request (deposit address,
+exact amount, request id, deadline) until retention ends. Keep it on the device
+or handle it like payment data. SDK logs redact the ticket and hash the
 `sessionRef` by default — keep it that way in yours.
 
 ## 7. Bridge events reference
@@ -522,6 +524,7 @@ Branch on `error.code` (all SDK errors extend `PspError`), never on message text
 | `UnsupportedProtocolVersion` | pane spoke an unknown `v` | bridge closed; upgrade the SDK/deployment |
 | `InvalidReturnUrl` | unparseable return link | ignore the link; reconcile via status |
 | `InvalidAmount` | non-canonical money value | fix the input; never use floats |
+| `HandoffRefused` | a handoff link is not the recorded send request, or it can no longer be sent (`.reason`) | show nothing to the wallet; check status |
 
 There are **no automatic retries** anywhere in the SDK. A timed-out create may
 have succeeded server-side — reconcile, then optionally reuse a persisted
@@ -577,8 +580,8 @@ so any change to it ships as a coordinated pane + SDK release.
   the registered string itself (no path segment is added; SELL deposits carry
   no `memo`), so it must not contain `?` or `#` and must leave room for the
   parameters (at most 1600 characters). There is no QR or copy fallback in
-  this mode. While the request is unanswered and before its deadline, the
-  pane can offer the same link again (same `requestId`): your journal's
+  this mode. While no wallet reply is on record and more than 30 s before the
+  deadline, the pane can offer the same link again (same `requestId`): your journal's
   exactly-once claim makes a repeat harmless. On a repeat, never ask the
   wallet again; if the outcome is recorded, hand its evidence back again.
 - **Resume.** After the native confirmation and broadcast, reopen the pane at
@@ -597,12 +600,13 @@ so any change to it ships as a coordinated pane + SDK release.
   pane's "Return to wallet" control navigates on demand. `expired` is not
   terminal and never navigates. Outcomes on links are resume hints:
   `getStatus` stays the receipt.
-- **Open item before a live pilot.** The handoff link carries no integrity
-  binding: deep links are spoofable by design, so your app must not take the
-  address and amount on faith. Until the protocol gains a server-side check
-  (a ticketed read of the recorded request, or a server signature on the
-  link), present the parsed request on your native sheet exactly as received
-  and agree the cross-check with 0xramp before enabling a live wallet adapter.
+- **Integrity.** A handoff link proves nothing by itself: any app on the device
+  can open your scheme with another address. Before your journal and your
+  native sheet, call `verifyZecSendHandoff`. It reads the request 0xramp
+  recorded for the session with your status ticket, which the pane never holds,
+  and refuses a link that differs, or a request the server no longer calls
+  sendable. A failed read means nothing may be sent: offer to reopen the
+  verbatim `sessionUrl`, with no evidence, so the pane can offer the link again.
 
 ### The recipe (React Native)
 
@@ -612,7 +616,7 @@ create → open → handoff link → native send → resume link → return link
 authoritative status:
 
 ```ts
-import { buildZecSendReply, buildZecSendResumeUrl, parseZecSendHandoffUrl, type ZecSendRequestPayload } from "@0xramp/sdk";
+import { buildZecSendReply, buildZecSendResumeUrl, parseZecSendHandoffUrl } from "@0xramp/sdk";
 
 // 1 — create the session as usual (returnUrl scheme rules below)
 const session = await ramp.createSession({
@@ -644,10 +648,13 @@ function handleLink(url: string) {
     const target = new URL(url);
     if (target.protocol !== "mywallet:") return;
     if (target.searchParams.has("requestId")) {
-      // Pane → wallet handoff: a payment REQUEST for your native sheet,
-      // bound to the active session (a link of any other session throws).
-      const { sessionRef, ...request } = parseZecSendHandoffUrl(url, { sessionRef: session.sessionRef });
-      confirmAndSend(sessionRef, request).catch(showReconcileScreen); // never send again: the journal keeps the claim
+      // Pane → wallet handoff: a payment REQUEST, and deep links are spoofable.
+      parseZecSendHandoffUrl(url, { sessionRef: session.sessionRef }); // junk throws here and is dropped quietly
+      confirmAndSend(url).catch(error => {
+        // A refused link did nothing: drop it quietly. Anything else is unresolved: never send again.
+        if (error.code === "HandoffRefused") void refreshStatus();
+        else showReconcileScreen();
+      });
       return;
     }
     const parsed = ramp.parseReturnUrl(url);
@@ -655,15 +662,16 @@ function handleLink(url: string) {
   } catch { /* malformed/unrelated link */ }
 }
 
-async function confirmAndSend(sessionRef: string, request: ZecSendRequestPayload) {
-  // A held session stays closed: read status before anything reaches the wallet.
-  const status = await ramp.getStatus(sessionRef);
-  if (status.terminal || status.outcome === "expired") return showReconcileScreen();
+async function confirmAndSend(url: string) {
+  const sessionRef = session.sessionRef;
+  // Only the request 0xramp recorded for this session gets past here, and only while
+  // the server calls it sendable: before the journal and the sheet.
+  const { request, deadline } = await ramp.verifyZecSendHandoff(url, { sessionRef });
   const previous = await sendStore.claim(sessionRef, request);
   let reply = previous?.reply;                  // a replay never reaches the wallet again
   if (previous === undefined) {
     let outcome: unknown;                       // a wallet error stays pending: never auto-resend
-    try { outcome = await myWallet.confirmAndSend(request); } catch { /* unknown broadcast */ }
+    try { outcome = await myWallet.confirmAndSend(request, { deadline }); } catch { /* unknown broadcast */ }
     reply = buildZecSendReply(sessionRef, request.requestId, outcome);
     await sendStore.complete(sessionRef, request, reply).catch(showReconcileScreen);
   }
@@ -682,13 +690,14 @@ async function confirmAndSend(sessionRef: string, request: ZecSendRequestPayload
 
 Route the result of **every** auth-session open through your link handler: on
 iOS the sheet's callback URL arrives that way, so dropping it loses the
-flow-end return link or a repeated send request. Refuse a send request once
-status is terminal or expired, re-check after the claim, and cancel an open
-sheet when status turns terminal; closing the pane is not a reason to cancel,
-because the pane leaves on purpose at the handoff.
-`examples/react-native-host/host.ts` shows `handleReturn` and `runHandoff`
-with all of that; `buildZecSendReply` maps a wallet outcome to the PSP-v1 reply
-the journal stores, exactly as the bridge does. Refresh
+flow-end return link or a repeated send request. Close your sheet by the verified
+`deadline`, because status will not end a recorded request, and cancel it when
+status turns terminal. Closing the pane is not a reason to cancel, because the
+pane leaves on purpose at the handoff.
+`examples/react-native-host/host.ts` shows `handleReturn` and `runHandoff` with
+all of that, and also re-checks its own session state after the claim as the
+bridge does; `buildZecSendReply` maps a wallet outcome to the PSP-v1 reply the
+journal stores, exactly as the bridge does. Refresh
 `getStatus(session.sessionRef)` on the return link and on app foreground;
 the status endpoint stays the only authoritative receipt.
 
@@ -754,9 +763,20 @@ The pane emits the draft encoding below. It freezes with the partner's
 confirmation of the return scheme and the wallet send API; until then any
 change ships as a coordinated pane + SDK release:
 
-- `parseZecSendHandoffUrl(url, { sessionRef })` parses a pane → wallet
-  handoff link (dedicated query params on YOUR registered return URL:
-  `sessionRef`, `requestId`, transparent `address`, canonical integer
+- `ramp.verifyZecSendHandoff(url, { sessionRef })` is what a host calls: it
+  parses the link, reads the request 0xramp recorded for the session with the
+  status ticket (`GET …/sessions/:sessionRef/send-request`,
+  `ramp.getRecordedZecSendRequest`) and returns `{ sessionRef, request, deadline }`
+  only if the link is exactly the recorded request and the server's `state` is
+  `sendable`. Otherwise it throws `HandoffRefused` with `reason`: `not-recorded`,
+  `mismatch`, `answered` (a wallet reply is on record), `past-deadline` (at or
+  within 30 s of the deadline, on the server's clock) or `closed` (the route no
+  longer accepts this deposit: already paid, ordered or closed by 0xramp). Network
+  and schema failures throw their own codes, and any failure means nothing may be
+  sent. Call it before `sendStore.claim`.
+- `parseZecSendHandoffUrl(url, { sessionRef })` is the parser underneath: it
+  reads a pane → wallet handoff link (dedicated query params on YOUR registered
+  return URL: `sessionRef`, `requestId`, transparent `address`, canonical integer
   `amountZat`, optional `memo`). It fails closed on session mismatch,
   malformed parameters, and non-canonical amounts, and returns a
   `ZecSendRequestPayload`-shaped request — so the existing `sendStore`
@@ -767,11 +787,12 @@ change ships as a coordinated pane + SDK release:
   txid evidence (1–32 × 64-hex) to the verbatim `sessionUrl`, keeping its
   `#paneToken` fragment.
 
-Trust model: deep links are spoofable by design. The parsed handoff is a
-payment **request** — your wallet's native confirmation sheet remains the
-only approval gate, and the SDK never signs — and resume txids are advisory
-evidence the pane reconciles; the ticketed status endpoint stays
-authoritative. Draft wire vectors live in `fixtures/psp-v1/draft/`
+Trust model: deep links are spoofable by design, so a parsed handoff is only a
+claim until `verifyZecSendHandoff` matches it against the recorded request and
+the server's verdict. Your
+wallet's native confirmation sheet remains the only approval gate, and the SDK
+never signs. Resume txids are advisory evidence the pane reconciles; the ticketed
+status endpoint stays authoritative. Draft wire vectors live in `fixtures/psp-v1/draft/`
 (explicitly excluded from the frozen PSP-v1 conformance set). Do not build
 production flows on this encoding before it freezes.
 
@@ -830,8 +851,8 @@ From `partner-readiness.md` — required before enabling a live wallet adapter:
       your registered return link and navigates back at flow end; links are
       routed by `requestId`, repeated links dedupe by request id, the verbatim
       `sessionUrl` is reopened with the evidence, your scheme launches from the
-      pane on the target browsers, and the wallet-side cross-check of a
-      handoff's address and amount is agreed with 0xramp (section 9).
+      pane on the target browsers, and every handoff link passes
+      `verifyZecSendHandoff` before your journal and your native sheet (section 9).
 - [ ] A controlled real session proves both Zcash deposit and authoritative fiat
       settlement, including failure, expiry/late deposit, and interrupted return.
 - [ ] Protocol/fixture CODEOWNERS approved the wire surface before merge.

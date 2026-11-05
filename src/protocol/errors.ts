@@ -16,7 +16,8 @@ export type PspErrorCode =
   | "ApiError"
   | "InvalidAmount"
   | "InvalidReturnUrl"
-  | "ConfigError";
+  | "ConfigError"
+  | "HandoffRefused";
 
 export class PspError extends Error {
   readonly code: PspErrorCode;
@@ -91,6 +92,22 @@ export class InvalidAmountError extends PspError {
 export class InvalidReturnUrlError extends PspError {
   constructor(message = "return URL could not be parsed") {
     super("InvalidReturnUrl", message);
+  }
+}
+
+/** Why a handoff link did not pass the check against the recorded send request. */
+export type ZecSendHandoffRefusal = "not-recorded" | "mismatch" | "answered" | "past-deadline" | "closed";
+
+/**
+ * A handoff link is not the send request 0xramp recorded for the session, or
+ * that request can no longer be sent. Never show it to the wallet's sheet.
+ */
+export class ZecSendHandoffRefusedError extends PspError {
+  readonly reason: ZecSendHandoffRefusal;
+
+  constructor(reason: ZecSendHandoffRefusal, message = `handoff link refused: ${reason}`) {
+    super("HandoffRefused", message);
+    this.reason = reason;
   }
 }
 

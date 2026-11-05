@@ -12,9 +12,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { PspError } from "../protocol/errors.js";
+import { PspError, ZecSendHandoffRefusedError } from "../protocol/errors.js";
 import {
   buildZecSendResumeUrl,
+  matchZecSendHandoff,
+  parseRecordedZecSendRequest,
   parseZecSendHandoffUrl,
   type ZecSendResumeEvidence,
 } from "./handoff.js";
@@ -26,6 +28,7 @@ interface DraftFixture {
     url: string;
     parse?: { sessionRef: string };
     evidence?: ZecSendResumeEvidence;
+    recorded?: unknown;
     expected: Record<string, unknown> | string;
   };
 }
@@ -65,6 +68,14 @@ describe("PSP-v1 draft handoff vectors (unfrozen)", () => {
     expect(names).toContain("handoff.negative-duplicate-param.json");
     expect(names).toContain("handoff.negative-mismatch.json");
     expect(names).toContain("handoff.registered-base.json");
+    expect(names).toContain("recorded.canonical.json");
+    expect(names).toContain("recorded.negative-address.json");
+    expect(names).toContain("recorded.negative-amount.json");
+    expect(names).toContain("recorded.negative-not-recorded.json");
+    expect(names).toContain("recorded.negative-answered.json");
+    expect(names).toContain("recorded.negative-deadline.json");
+    expect(names).toContain("recorded.negative-closed.json");
+    expect(names).toContain("recorded.negative-unknown-state.json");
     expect(names).toContain("resume.canonical.json");
     expect(names).toContain("resume.fragment.json");
     expect(names).toContain("resume.negative-hex.json");
@@ -95,6 +106,21 @@ describe("PSP-v1 draft handoff vectors (unfrozen)", () => {
         } else {
           expect(typeof expected).toBe("string");
           expect(buildZecSendResumeUrl(url, evidence ?? {})).toBe(expected);
+        }
+        return;
+      }
+      if (fixture.kind === "draft.zec-send-recorded") {
+        if (parse === undefined) throw new Error(`recorded vector ${file} must bind a session via parse.sessionRef`);
+        const handoff = parseZecSendHandoffUrl(url, parse);
+        const recorded = parseRecordedZecSendRequest(fixture.data.recorded, parse.sessionRef);
+        if (!recorded.ok) throw recorded.error;
+        if (expectedError !== undefined) {
+          expectErrorCode(() => matchZecSendHandoff(handoff, recorded.value), expectedError);
+          try { matchZecSendHandoff(handoff, recorded.value); } catch (error) {
+            expect((error as ZecSendHandoffRefusedError).reason).toBe((expected as { reason: string }).reason);
+          }
+        } else {
+          expect(matchZecSendHandoff(handoff, recorded.value)).toEqual(expected);
         }
         return;
       }

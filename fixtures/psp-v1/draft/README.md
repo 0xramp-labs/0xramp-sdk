@@ -29,6 +29,12 @@ by `src/session/handoff.fixtures.test.ts`:
     `txids` lists serialize comma-joined, percent-encoded as `%2C` by
     `URLSearchParams`; consumers parse with `URLSearchParams`.
   - Negative: `data: { url, evidence, expected: { error } }`.
+- `draft.zec-send-recorded` — a handoff link checked against the request
+  recorded for the session.
+  - Positive: `data: { url, parse, recorded, expected }` — `matchZecSendHandoff`
+    of the parsed link and `recorded` deep-equals `expected`.
+  - Negative: `data: { url, parse, recorded, expected: { error, reason } }` — the
+    match throws `HandoffRefused` with that `reason`.
 
 ## Draft encoding (reviewable, not frozen)
 
@@ -46,9 +52,18 @@ by `src/session/handoff.fixtures.test.ts`:
   roughly 28–30 txids fit — larger evidence sets reconcile via the status
   endpoint. A `#fragment` on the base is preserved after the appended query.
 
-Deep links are spoofable by design: handoff parses are payment *requests* for
-the wallet's native confirmation sheet, and resume txids are advisory evidence
-the pane reconciles — the ticketed status endpoint stays authoritative.
+- Recorded request: `GET …/sessions/:sessionRef/send-request` with the status
+  ticket returns `{ "request": null }` until the pane records one, then
+  `{ "request": { requestId, address, amountZat }, "deadline": <ISO 8601>,
+  "state": <string> }`. `state` is the server's verdict: `sendable`, `answered` (a
+  wallet reply is on record), `past-deadline` (at or within 30 s of the deadline)
+  or `closed` (the route no longer accepts this deposit). Any other value must be
+  read as not sendable.
+
+Deep links are spoofable by design: a handoff parse is only a claim until it
+matches the recorded request, the wallet's native confirmation sheet stays the
+approval gate, and resume txids are advisory evidence the pane reconciles — the
+ticketed status endpoint stays authoritative.
 
 All values are synthetic. Real addresses, transaction IDs, or session data
 must never be committed here.

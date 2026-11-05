@@ -30,7 +30,7 @@ The WebView recipe above is the default for desktop hosts. On mobile, the pane m
 
 ### Deep-link handoff trust model
 
-Return deep-links and handoff links are **spoofable by design** — any app on the device can open a registered scheme. Txid evidence carried on a wallet→pane resume link is **advisory**; correlation and exactly-once semantics come from the durable, wallet-scoped send journal keyed by `(sessionRef, requestId)`, and the wallet's **native confirmation sheet is the approval gate** — the SDK never signs. No settlement or status decision ever trusts a link. The handoff link itself has no integrity binding yet: the wallet-side cross-check of its address and amount must be agreed before a live pilot (partner guide section 9).
+Return deep-links and handoff links are **spoofable by design** — any app on the device can open a registered scheme. Txid evidence carried on a wallet→pane resume link is **advisory**; correlation and exactly-once semantics come from the durable, wallet-scoped send journal keyed by `(sessionRef, requestId)`, and the wallet's **native confirmation sheet is the approval gate** — the SDK never signs. No settlement or status decision ever trusts a link, and a handoff link reaches the native sheet only after `verifyZecSendHandoff` matched it against the request 0xramp recorded for the session and the server called that request sendable, read with the status ticket the pane never holds.
 
 ## Layering & future
 
