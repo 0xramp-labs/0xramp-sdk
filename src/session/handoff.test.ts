@@ -3,7 +3,7 @@
  * All values are sandbox-style synthetic; nothing here is real address,
  * amount, or transaction data.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   ConfigError,
@@ -151,6 +151,35 @@ describe("buildZecSendResumeUrl", () => {
     const resume = buildZecSendResumeUrl(base, { txid: TXID });
     expect(resume).toBe(`${PANE_URL}&txid=${TXID}#paneToken=paneGOLDEN00000000000000000000000000000001`);
     expect(new URL(resume).hash).toBe(new URL(base).hash);
+  });
+
+  it("keeps the evidence in the query where a URL class appends mutated params at the end", () => {
+    // React Native's own URL class works this way, unless the app installs a polyfill.
+    class AppendingUrl {
+      readonly searchParams: URLSearchParams;
+      constructor(private readonly raw: string) {
+        this.searchParams = new URLSearchParams(raw.split("#")[0]!.split("?")[1] ?? "");
+      }
+      toString() { return `${this.raw}&${this.searchParams}`; }
+    }
+    vi.stubGlobal("URL", AppendingUrl);
+    try {
+      const base = `${PANE_URL}#paneToken=paneGOLDEN00000000000000000000000000000001`;
+      expect(buildZecSendResumeUrl(base, { txid: TXID, txids: [TXID, TXID_2] })).toBe(
+        `${PANE_URL}&txid=${TXID}&txids=${TXID}%2C${TXID_2}#paneToken=paneGOLDEN00000000000000000000000000000001`,
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("adds a query to a base without one and leaves the base otherwise verbatim", () => {
+    expect(buildZecSendResumeUrl("https://0xramp.app/partner/zingo#paneToken=abc", { txid: TXID })).toBe(
+      `https://0xramp.app/partner/zingo?txid=${TXID}#paneToken=abc`,
+    );
+    expect(buildZecSendResumeUrl("https://0xramp.app/partner/zingo?a=1&#paneToken=x?y", { txid: TXID })).toBe(
+      `https://0xramp.app/partner/zingo?a=1&txid=${TXID}#paneToken=x?y`,
+    );
   });
 
   it("round-trips through the existing channel-5 parser (sessionRef intact)", () => {

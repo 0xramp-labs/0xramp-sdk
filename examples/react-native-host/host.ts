@@ -222,8 +222,9 @@ export function createPartnerHost({ client, storage, transport, wallet, sendStor
     handleReturn(url: string) {
       // App owns scheme/host routing. Link claims never set the session outcome.
       try {
+        // On the string: React Native's own URL class has an empty hostname for a custom scheme.
+        if (url !== "ramp-example://ramp" && !url.startsWith("ramp-example://ramp?")) return;
         const target = new URL(url);
-        if (target.protocol !== "ramp-example:" || target.hostname !== "ramp") return;
         if (target.searchParams.has("requestId")) {
           // Pane → wallet handoff: a payment request for the native sheet, bound to the active session.
           if (disposed || session === undefined || state.blocked) { update({ message: "Handoff ignored: no session open for sending. Reconcile via status." }); return; }

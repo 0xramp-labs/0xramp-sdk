@@ -266,10 +266,17 @@ export function buildZecSendResumeUrl(baseUrl: string, evidence: ZecSendResumeEv
     }
   }
 
-  if (txid !== undefined) parsed.searchParams.set("txid", txid);
-  if (txids !== undefined) parsed.searchParams.set("txids", txids.join(","));
-
-  const resume = parsed.toString();
+  // Spliced by hand, on values already proven hex: React Native's own URL class
+  // appends mutated params after the fragment, where the pane cannot read them.
+  const added = [
+    ...(txid !== undefined ? [`txid=${txid}`] : []),
+    ...(txids !== undefined ? [`txids=${txids.join("%2C")}`] : []),
+  ].join("&");
+  const fragmentAt = baseUrl.indexOf("#");
+  const head = fragmentAt === -1 ? baseUrl : baseUrl.slice(0, fragmentAt);
+  const fragment = fragmentAt === -1 ? "" : baseUrl.slice(fragmentAt);
+  const separator = !head.includes("?") ? "?" : /[?&]$/.test(head) ? "" : "&";
+  const resume = `${head}${separator}${added}${fragment}`;
   if (resume.length > MAX_HANDOFF_URL_LENGTH) {
     throw new InvalidReturnUrlError(
       "resume URL exceeds the 2048-character deep-link bound; reconcile large evidence sets via the status endpoint",

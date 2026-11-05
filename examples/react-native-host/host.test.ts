@@ -83,6 +83,8 @@ describe("simulated partner integration", () => {
     expect(h.wallet).toHaveBeenCalledOnce(); expect(h.resumes()).toEqual([resume, resume]); expect(h.state().message).toContain("Never send again");
     host.handleReturn(`ramp-example://ramp?${query.replace(ref, "sessOTHER0000000001")}`); await flush();
     host.handleReturn(`attacker://ramp?${query}`); await flush();
+    host.handleReturn(`ramp-example://other?${query}`); await flush();
+    host.handleReturn(`ramp-example://ramp-other?${query}`); await flush();
     expect(h.wallet).toHaveBeenCalledOnce(); expect(h.state().active).toBe(true); host.dispose();
   });
   it("journals a declined handoff without a resume link and never asks the wallet again", async () => {

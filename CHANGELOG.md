@@ -6,6 +6,13 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Fixed
+
+- `buildZecSendResumeUrl` keeps the evidence in the query under React Native's own
+  URL class, which appended it after the fragment, where the pane could not read
+  it. The example host routes links on the string, since that class has an empty
+  hostname for a custom scheme.
+
 ### Added
 
 - Handoff link verification (draft): `ramp.verifyZecSendHandoff(url, { sessionRef })`

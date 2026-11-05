@@ -594,6 +594,22 @@ so any change to it ships as a coordinated pane + SDK release.
   of the deposit: keep it in your journal until wallet history proves it, then
   hand it back as `txid`. A link without the fragment cannot open the pane.
   A declined send has no resume link: the pane keeps reconciling via status.
+  After an uncertain send, never send again and reopen the verbatim
+  `sessionUrl`: the sale continues if the deposit lands.
+- **Keep the pane open.** The order and the payout key go out from the open
+  pane. Once the user is signed in, a reopened pane continues the sale by
+  itself, and it needs to stay open until the sale finishes. If the user leaves,
+  reopen the verbatim `sessionUrl`; an order left waiting for its payout key can
+  be cancelled.
+- **What the user does in the pane.** The first sign-in is by email, and a
+  passkey can be linked afterwards. A transparent ZEC refund address is required
+  before opening a sale and the session has no field for it yet, so show the
+  wallet's transparent address for the user to copy first. Send exactly
+  `amountZat`, with the network fee on top. Reuse one saved session until its
+  status is terminal: a new session is blocked while the account has an open sale.
+- **React Native.** The SDK's calls work with React Native's own URL classes, but
+  they report an empty `hostname` for a custom scheme. Route links on the string,
+  as the example host does, or install a WHATWG URL polyfill.
 - **Return.** On a terminal outcome the pane navigates once per outcome to
   `<returnUrl>?sessionRef=…&outcome=<settled|failed|cancelled>`, after the
   wallet's reply is recorded, so an auth-session sheet closes itself; the
@@ -745,7 +761,8 @@ cannot prove them.
    your app on the registered link (handoff above). Your app is the only
    signing path: there is no QR or copy fallback.
 3. Your app reopens the pane with the resume link; the pane records the
-   evidence, the deposit is detected on-chain and the flow continues.
+   evidence, the deposit is detected on-chain and the sale continues by itself
+   while the pane stays open.
 4. At flow end the pane navigates to your return scheme with the outcome; the
    sheet closes; your app refreshes status from the ticketed status endpoint —
    the authoritative receipt for the fiat leg.
