@@ -4,37 +4,47 @@
  * **DRAFT — unfrozen, pending partner confirmation.** The wallet's renamed
  * return scheme and its native send API are not confirmed yet, so the
  * query-param encoding below is a reviewable draft: it is NOT part of the
- * PSP-v1 conformance set, pane-side conformance is NOT claimed, and the
- * encoding may change before it freezes. Draft vectors live in
+ * PSP-v1 conformance set, no shared gate proves pane-side conformance although
+ * the pane targets this encoding, and the encoding may change before it
+ * freezes. Draft vectors live in
  * `fixtures/psp-v1/draft/`, which the frozen fixture gate does not load.
  *
  * Draft encoding (dedicated query params on the host's registered scheme):
- * - pane → wallet handoff link:
- *   `<scheme>:…?sessionRef=…&requestId=…&address=<t-addr>&amountZat=<integer>[&memo=…]`
- * - wallet → pane resume link: an existing pane/return URL plus advisory
- *   txid evidence params `txid=<64-hex>` and/or `txids=<comma-separated 64-hex>`.
+ * - pane → wallet handoff link, with the registered return URL itself as the
+ *   base (no path segment added; SELL deposits carry no memo):
+ *   `<returnUrl>?sessionRef=…&requestId=…&address=<t-addr>&amountZat=<integer>[&memo=…]`
+ * - wallet → pane resume link: the verbatim `sessionUrl` (query and
+ *   `#paneToken` fragment intact) plus advisory txid evidence params
+ *   `txid=<64-hex>` and/or `txids=<comma-separated 64-hex>`.
  *
- * Trust model: deep links are spoofable by design. A parsed handoff is a
- * payment *request* for the wallet's native confirmation sheet — the SDK
- * never signs — and resume-link txids are advisory evidence for the pane to
- * reconcile; the ticketed status endpoint stays authoritative. The parse
- * output is shape-compatible with `ZecSendRequestPayload`, so the existing
- * `ZecSendStore` claim/journal semantics (exactly-once, replay-safe) apply
- * unchanged.
+ * Trust model: deep links are spoofable by design, so a parsed handoff proves
+ * nothing by itself. `matchZecSendHandoff` compares it with the request 0xramp
+ * recorded for the session, read with the status ticket the pane never holds,
+ * and takes the server's verdict on whether it can still be sent. Only a matching,
+ * sendable request may reach the wallet's native confirmation sheet, which stays
+ * the approval gate — the SDK never signs. Resume-link txids
+ * are advisory evidence for the pane to reconcile; the ticketed status endpoint
+ * stays authoritative. The parse output is shape-compatible with
+ * `ZecSendRequestPayload`, so the existing `ZecSendStore` claim/journal
+ * semantics (exactly-once, replay-safe) apply unchanged.
  *
  * DOM-free and React-free: only WHATWG URL/URLSearchParams, the shared
  * protocol schemas, and the integer money helpers are used.
  */
+import { z } from "zod";
+
 import {
   ConfigError,
   InvalidReturnUrlError,
   SchemaViolationError,
   SessionMismatchError,
+  ZecSendHandoffRefusedError,
 } from "../protocol/errors.js";
 import {
   parsePaneToHostMessage,
   sessionRefSchema,
   zecTxidSchema,
+  type ParseResult,
 } from "../protocol/schema.js";
 import type { ZecSendRequestPayload } from "../protocol/types.js";
 import { parseZatoshi } from "../units/decimal.js";
@@ -62,8 +72,9 @@ function handoffQueryParams(url: string): URLSearchParams {
 
 /**
  * **DRAFT — unfrozen, pending partner confirmation.** Canonical parse
- * result: `sessionRef` plus a `ZecSendRequestPayload`-shaped request, ready
- * for `ZecSendStore.claim(sessionRef, request)` without adaptation.
+ * result: `sessionRef` plus a `ZecSendRequestPayload`-shaped request. This is an
+ * unverified claim: only the `request` returned by `verifyZecSendHandoff` may
+ * reach `ZecSendStore.claim` and the native sheet.
  */
 export type ParsedZecSendHandoff = ZecSendRequestPayload & { sessionRef: string };
 
@@ -80,8 +91,10 @@ export type ParsedZecSendHandoff = ZecSendRequestPayload & { sessionRef: string 
  * (including any query parameter appearing more than once), non-canonical
  * amounts throw `InvalidAmountError`, unparseable input throws
  * `InvalidReturnUrlError`, and a link for a different session throws
- * `SessionMismatchError`. The wallet's native confirmation sheet remains the
- * approval gate; this function never signs and never moves funds.
+ * `SessionMismatchError`. A link that parses is still only a claim, and any app
+ * can open the scheme: hosts call `verifyZecSendHandoff` before their journal and
+ * their native sheet, which remains the approval gate. This function never signs
+ * and never moves funds.
  */
 export function parseZecSendHandoffUrl(
   url: string,
@@ -136,6 +149,69 @@ export function parseZecSendHandoffUrl(
 }
 
 /**
+ * **DRAFT — unfrozen, pending partner confirmation.** The send request 0xramp
+ * recorded for a session, as returned by the ticketed read. `state` is the
+ * server's verdict, on its own clock and financial session: `sendable`,
+ * `answered` (a wallet reply is on record), `past-deadline` (at or within 30 s of
+ * the deadline) or `closed` (the route no longer accepts this deposit). Any other
+ * value must be read as not sendable.
+ */
+export type RecordedZecSendRequest =
+  | { request: null }
+  | { request: ZecSendRequestPayload; deadline: string; state: string };
+
+/** **DRAFT.** A handoff that matched the record while the server called it sendable. */
+export interface VerifiedZecSendHandoff {
+  sessionRef: string;
+  /** What may reach `ZecSendStore.claim` and the native sheet. */
+  request: ZecSendRequestPayload;
+  /** ISO 8601. Bound the native sheet by it: status will not end a recorded request. */
+  deadline: string;
+}
+
+const recordedResponseSchema = z.object({
+  request: z.unknown(),
+  deadline: z.string().max(64).refine((value) => Number.isFinite(Date.parse(value))).optional(),
+  state: z.string().min(1).max(32).optional(),
+});
+
+/** **DRAFT.** Validate the ticketed read through the same payload gate the bridge applies. */
+export function parseRecordedZecSendRequest(raw: unknown, sessionRef: string): ParseResult<RecordedZecSendRequest> {
+  const refused = (message: string) => ({ ok: false as const, error: new SchemaViolationError(message) });
+  const body = recordedResponseSchema.safeParse(raw);
+  if (!body.success || body.data.request === undefined) return refused("recorded send request failed schema validation");
+  if (body.data.request === null) return { ok: true, value: { request: null } };
+  const { deadline, state } = body.data;
+  if (deadline === undefined || state === undefined) return refused("recorded send request is incomplete");
+  const checked = parsePaneToHostMessage({ v: 1, type: "psp/zec-send-request", sessionRef, payload: body.data.request });
+  if (!checked.ok) return checked;
+  if (checked.value.type !== "psp/zec-send-request") return refused("unexpected recorded request type");
+  return { ok: true, value: { request: checked.value.payload, deadline, state } };
+}
+
+/**
+ * **DRAFT.** Refuse a parsed handoff unless it is exactly the recorded request and
+ * the server calls it sendable. Exact string comparison on canonical values:
+ * address, integer amount, request id, and a memo only if recorded. An unknown or
+ * missing state is refused: only `sendable` opens the way.
+ */
+export function matchZecSendHandoff(handoff: ParsedZecSendHandoff, recorded: RecordedZecSendRequest): VerifiedZecSendHandoff {
+  if (recorded.request === null || recorded.request === undefined) throw new ZecSendHandoffRefusedError("not-recorded");
+  const { request } = recorded;
+  if (
+    request.requestId !== handoff.requestId ||
+    request.address !== handoff.address ||
+    request.amountZat !== handoff.amountZat ||
+    (request.memo ?? null) !== (handoff.memo ?? null)
+  ) {
+    throw new ZecSendHandoffRefusedError("mismatch");
+  }
+  if (recorded.state === "sendable") return { sessionRef: handoff.sessionRef, request, deadline: recorded.deadline };
+  if (recorded.state === "answered" || recorded.state === "past-deadline") throw new ZecSendHandoffRefusedError(recorded.state);
+  throw new ZecSendHandoffRefusedError("closed");
+}
+
+/**
  * **DRAFT — unfrozen, pending partner confirmation.** Advisory txid evidence
  * a wallet attaches to a wallet → pane resume link after a native confirm +
  * broadcast. Either field alone is valid; providing both requires `txids` to
@@ -150,10 +226,12 @@ export interface ZecSendResumeEvidence {
 
 /**
  * **DRAFT — unfrozen, pending partner confirmation.** Build a wallet → pane
- * resume URL: an existing pane/return URL plus advisory txid evidence as
- * `txid` / comma-joined `txids` query params. Pure string building — the
- * outcome is evidence for the pane to reconcile, never an authoritative
- * receipt; the pane's own chain view and the status endpoint decide.
+ * resume URL: the verbatim `sessionUrl` (its query and `#paneToken` fragment
+ * are preserved — the pane cannot open without the fragment) plus advisory
+ * txid evidence as `txid` / comma-joined `txids` query params. Pure string
+ * building — the outcome is evidence for the pane to reconcile, never an
+ * authoritative receipt; the pane's own chain view and the status endpoint
+ * decide.
  *
  * Fail closed on an unparseable base (`InvalidReturnUrlError`), missing
  * evidence (`ConfigError`), schema-violating values (`SchemaViolationError`),
@@ -188,10 +266,17 @@ export function buildZecSendResumeUrl(baseUrl: string, evidence: ZecSendResumeEv
     }
   }
 
-  if (txid !== undefined) parsed.searchParams.set("txid", txid);
-  if (txids !== undefined) parsed.searchParams.set("txids", txids.join(","));
-
-  const resume = parsed.toString();
+  // Spliced by hand, on values already proven hex: React Native's own URL class
+  // appends mutated params after the fragment, where the pane cannot read them.
+  const added = [
+    ...(txid !== undefined ? [`txid=${txid}`] : []),
+    ...(txids !== undefined ? [`txids=${txids.join("%2C")}`] : []),
+  ].join("&");
+  const fragmentAt = baseUrl.indexOf("#");
+  const head = fragmentAt === -1 ? baseUrl : baseUrl.slice(0, fragmentAt);
+  const fragment = fragmentAt === -1 ? "" : baseUrl.slice(fragmentAt);
+  const separator = !head.includes("?") ? "?" : /[?&]$/.test(head) ? "" : "&";
+  const resume = `${head}${separator}${added}${fragment}`;
   if (resume.length > MAX_HANDOFF_URL_LENGTH) {
     throw new InvalidReturnUrlError(
       "resume URL exceeds the 2048-character deep-link bound; reconcile large evidence sets via the status endpoint",

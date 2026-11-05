@@ -6,8 +6,44 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Fixed
+
+- `buildZecSendResumeUrl` keeps the evidence in the query under React Native's own
+  URL class, which appended it after the fragment, where the pane could not read
+  it. The example host routes links on the string, since that class has an empty
+  hostname for a custom scheme.
+
 ### Added
 
+- Handoff link verification (draft): `ramp.verifyZecSendHandoff(url, { sessionRef })`
+  parses a pane → wallet link and returns `{ sessionRef, request, deadline }` only
+  if it is exactly the request 0xramp recorded for the session and the server calls
+  it sendable, read with the status ticket the pane never holds
+  (`ramp.getRecordedZecSendRequest`, `GET …/sessions/:sessionRef/send-request`).
+  New `HandoffRefused` error code and `ZecSendHandoffRefusedError` with `reason`
+  (`not-recorded`, `mismatch`, `answered`, `past-deadline`, `closed`); pure helpers
+  `matchZecSendHandoff` and `parseRecordedZecSendRequest`; draft vectors
+  `recorded.*.json`. Needs a deployment that serves the read.
+- `buildZecSendReply(sessionRef, requestId, outcome)` (root and
+  `@0xramp/sdk/bridge`): the bridge's own mapping from a wallet outcome to the
+  PSP-v1 reply, for hosts that serve handoff links themselves. A missing or
+  malformed outcome maps to pending `broadcast-unknown`.
+- Draft vectors for the pane's actual link shapes: `handoff.registered-base.json`
+  (the registered return URL itself is the handoff base — no path segment, no
+  memo for SELL deposits) and `resume.fragment.json` (the resume link is the
+  verbatim `sessionUrl`, `#paneToken` fragment preserved after the appended
+  evidence); `buildZecSendResumeUrl` tests pin the fragment behaviour. The
+  React Native host example routes links carrying `requestId` as handoffs
+  through the same wallet-scoped journal as the bridge (`handleReturn` →
+  `runHandoff`, new `sendStore` option, `onResumeLink` hook for the resume
+  link) before falling back to `parseReturnUrl`. A link reaches the wallet only
+  after `verifyZecSendHandoff` matched it, before the journal is touched, and is
+  re-checked after the claim as the bridge does; a repeated link never reaches the
+  wallet again and hands recorded evidence back; terminal status and the verified
+  deadline abort an open sheet. The web host example reports a handoff
+  link it cannot serve instead of treating it as a return, and routes its
+  registered URL by exact origin and path instead of a query marker the
+  registration rules refuse.
 - Web host example (`examples/web-host/`): a zero-install browser reference
   for the bridge-less **popup hosting mode** (create → open popup → advisory
   return link → ticketed status), mirroring the React Native host controller
@@ -21,14 +57,11 @@ All notable changes to this project are documented here. Format based on
   cannot serve (no WebAuthn on Android WebView; iOS WKWebView would need a
   `webcredentials` association file 0xramp does not serve). The partner guide
   gains a "Browser-hosted pane (mobile and web hosts)" recipe (create → open
-  → return link → authoritative status, stage-1 SELL without any bridge) —
-  **planned
-  pane-side work, not yet live in the deployed pane** (no QR/copy outside a
-  native WebView; no return-link navigation yet; the guide marks the current
-  state); DESIGN and SPEC name the hosting modes.
+  → handoff link → native send → resume link → return link → authoritative
+  status; the guide states the deployment status); DESIGN and SPEC name the
+  hosting modes.
 - Draft zec-send deep-link handoff codec for that mode — **unfrozen, pending
-  partner confirmation; encoding may change and pane-side conformance is not
-  claimed**: `parseZecSendHandoffUrl` (pane → wallet payment request; the
+  partner confirmation; the encoding may change**: `parseZecSendHandoffUrl` (pane → wallet payment request; the
   expected session is required — a link from any other session throws
   `SessionMismatch`; fail-closed on duplicated query parameters, malformed
   parameters, and non-canonical amounts; a trailing `#fragment` is ignored;
@@ -45,6 +78,21 @@ All notable changes to this project are documented here. Format based on
 
 ### Changed
 
+- Browser-hosted pane contract: the partner guide §9, DESIGN, SPEC and README
+  now describe what the pane implements for this mode — the send request is
+  handed to the host on the registered return link (same `requestId` may be
+  offered again while no wallet reply is on record; no QR/copy fallback), resume evidence is
+  taken back on the verbatim `sessionUrl`, and the pane returns once per
+  terminal outcome (`settled`, `failed`, `cancelled`; `expired` never
+  navigates) — instead of calling it planned pane-side work; partners confirm
+  the deployment they target. The guide's recipe branches on `requestId`
+  before `parseReturnUrl`, states the registered return URL must contain no
+  `?`/`#` and stay within 1600 characters because it doubles as the handoff
+  base, notes that an iOS auth-session sheet also closes on the handoff
+  navigation, and requires `verifyZecSendHandoff` before the journal and the
+  native sheet. Readiness gains the matching checklist item and test-evidence
+  row. The docs no longer say the status ticket grants status and nothing more:
+  it also reads the recorded send request.
 - Partner guide corrections: the iOS initial-load attribution is fixed
   (CHANGELOG 0.0.1 recorded the iOS gap; the guide wrongly attributed it to
   Android — the create/restore origin lock already covers the initial load),
@@ -76,8 +124,18 @@ All notable changes to this project are documented here. Format based on
   Publishing (with provenance) is re-introduced when the package is
   registered on npm.
 
+### Security
+
+- Raise the pinned `zod` to 4.6.7 for GHSA-mrhx-c7xc-m3w5 (memory exhaustion while
+  validating oversized constrained collections), which `npm audit` now reports
+  against the previous pin.
+
 ### Fixed
 
+- Web host example: the sandbox session pointed at a path that does not exist,
+  so its popup returned 404, and a return landing rebuilt the sandbox client
+  even for a live session, answering it with synthetic status. The landing now
+  restores the mode and public config that created the saved session.
 - `parseReturnUrl` no longer reads a `#fragment` as part of the query in
   scheme-without-`//` links (e.g. `zingo:ramp?…#f`): the fragment is ignored,
   matching the URL standard.

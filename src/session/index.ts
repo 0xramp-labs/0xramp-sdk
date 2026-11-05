@@ -26,7 +26,11 @@ export {
 export { parseReturnUrl, type ParsedReturnUrl } from "./returnUrl.js";
 export {
   buildZecSendResumeUrl,
+  matchZecSendHandoff,
+  parseRecordedZecSendRequest,
   parseZecSendHandoffUrl,
   type ParsedZecSendHandoff,
+  type RecordedZecSendRequest,
+  type VerifiedZecSendHandoff,
   type ZecSendResumeEvidence,
 } from "./handoff.js";

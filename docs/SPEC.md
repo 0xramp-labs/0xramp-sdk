@@ -6,7 +6,7 @@
 
 A TypeScript SDK for wallet apps that want to offer 0xramp ZEC ↔ local-fiat ramps (Pix, UPI, …) by hosting **`0xramp.app`** in an embedded WebView or in the system browser (origin visible either way). The wallet signs **only** Zcash sends from its own wallet core. Everything else — identity (passkeys), the Base account, P2P.me orders, quotes, limits, fraud screening, fiat payout — runs inside `0xramp.app`, unchanged.
 
-**Hosting modes.** Desktop hosts embed the pane in a WebView with the postMessage bridge. Mobile hosts (passkey-first products) open the pane in the system browser (auth-session, e.g. `openAuthSessionAsync`); desktop web hosts open it as a top-level popup (`window.open`) — both bridge-less hosting modes: the pane drives the flow on-page and the host resumes via its registered return deep link (return-link navigation is planned pane-side work; not yet live in the deployed pane — see the partner guide); the ticketed status endpoint stays authoritative. See the partner guide's "Browser-hosted pane (mobile and web hosts)" section.
+**Hosting modes.** Desktop hosts embed the pane in a WebView with the postMessage bridge. Mobile hosts (passkey-first products) open the pane in the system browser (auth-session, e.g. `openAuthSessionAsync`); desktop web hosts open it as a top-level popup (`window.open`) — both bridge-less hosting modes: the pane hands the send request to the host on the registered return link, takes the resume evidence back on its own address and navigates back on the registered link at flow end (confirm the deployment you target — see the partner guide); the ticketed status endpoint stays authoritative. See the partner guide's "Browser-hosted pane (mobile and web hosts)" section.
 
 **Attribution:** integrations must display **"Powered by 0xramp · P2P.me"** at the ramp entry point.
 
@@ -130,8 +130,20 @@ Rules enforced by the SDK bridge:
 **Draft — pending partner confirmation; the encoding may change.** For the
 browser-hosted mode, the SDK ships a draft deep-link handoff codec
 (root and `@0xramp/sdk/session`: `parseZecSendHandoffUrl`,
-`buildZecSendResumeUrl`):
+`buildZecSendResumeUrl`, `matchZecSendHandoff`):
 
+- `ramp.verifyZecSendHandoff(url, expected)` is the host's entry point: it
+  parses the link, reads the recorded request with the status ticket
+  (`ramp.getRecordedZecSendRequest`, `GET …/sessions/:sessionRef/send-request`,
+  which returns `{ request: null }` or `{ request, deadline, state }`) and returns
+  `{ sessionRef, request, deadline }` only if the link is exactly the recorded
+  request and `state` is `sendable`. `state` is the server's verdict, on its own
+  clock and financial session. Otherwise → `HandoffRefused` with `reason`
+  `not-recorded`, `mismatch`, `answered` (a wallet reply is on record),
+  `past-deadline` (at or within 30 s of the deadline) or `closed` (the route no
+  longer accepts this deposit, and any state this SDK does not know). Any failure
+  means nothing may be sent. Call it before `ZecSendStore.claim` and the native
+  sheet, and bound the sheet by the returned `deadline`.
 - `parseZecSendHandoffUrl(url, expected)` parses a pane → wallet handoff
   link (dedicated query params on the host's registered scheme: `sessionRef`,
   `requestId`, transparent `address`, canonical integer `amountZat`, optional
@@ -143,25 +155,32 @@ browser-hosted mode, the SDK ships a draft deep-link handoff codec
   with `ZecSendRequestPayload`, so existing `ZecSendStore` claim/journal
   semantics apply unchanged (exactly-once, replay-safe).
 - `buildZecSendResumeUrl(baseUrl, evidence)` builds the wallet → pane resume
-  URL: an existing pane/return URL plus advisory txid evidence (`txid` and/or
-  comma-joined `txids`, 1–32 × 64-hex), consistent with the existing
-  txid/txids schema constraints. The 2048-character deep-link bound binds
+  URL: the **verbatim `sessionUrl`** (its query and `#paneToken` fragment are
+  preserved; the pane cannot open without the fragment) plus advisory txid
+  evidence (`txid` and/or comma-joined `txids`, 1–32 × 64-hex), consistent
+  with the existing txid/txids schema constraints. The 2048-character deep-link bound binds
   first: depending on the base URL, roughly 28–30 txids fit — larger evidence
   sets fail closed (`InvalidReturnUrl`) and reconcile via the status endpoint.
+- `buildZecSendReply(sessionRef, requestId, outcome)` (root and
+  `@0xramp/sdk/bridge`) is the bridge's own mapping from a wallet outcome to
+  the PSP-v1 reply a host stores with `ZecSendStore.complete` when it serves
+  handoff links itself. A missing or malformed outcome maps to pending
+  `broadcast-unknown`; never resend on it.
 
 Draft, unfrozen, and excluded from the conformance set: draft vectors live in
-`fixtures/psp-v1/draft/` (not in the frozen golden set), **pane-side
-conformance is NOT claimed**, and the encoding may change before it freezes.
+`fixtures/psp-v1/draft/` (not in the frozen golden set), **no shared gate
+proves pane-side conformance** although the pane targets this encoding, and
+the encoding may change before it freezes.
 Deep links are advisory by design; the wallet's native confirmation sheet is
 the approval gate and the ticketed status endpoint stays authoritative.
 
 ## Amounts, errors & security posture
 
 - **Amounts.** All money values are canonical decimal strings or integer-unit strings (`amountZat`: zatoshi, 10⁻⁸ ZEC). Never floats. Fiat/USDC legs use 6-decimal units.
-- **Errors.** A stable enum: `UnsupportedProtocolVersion`, `OriginLockViolation`, `SessionMismatch`, `SchemaViolation`, `PartnerQuotaExceeded`, `NetworkUnavailable`, …
+- **Errors.** A stable enum: `UnsupportedProtocolVersion`, `OriginLockViolation`, `SessionMismatch`, `SchemaViolation`, `PartnerQuotaExceeded`, `NetworkUnavailable`, `HandoffRefused`, …
 - **Advisory results.** Never make an irreversible decision on bridge or deep-link data. Authoritative signals: the ticketed status endpoint (`getStatus`) and your own view of the Zcash chain. Return deep-links are spoofable by design.
 - **Origin lock.** Lock WebView navigation to 0xramp origins and never obscure the origin. RN WebView `postMessage` carries no origin — messages are only accepted while the navigation-lock invariant holds (checklists in the partner guide).
-- **Redaction.** The SDK logger redacts `statusTicket` and hashes/omits `sessionRef`. Treat the `sessionRef + statusTicket` pair as bearer data: it grants read-only status, nothing more.
+- **Redaction.** The SDK logger redacts `statusTicket` and hashes/omits `sessionRef`. Treat the `sessionRef + statusTicket` pair as bearer data: it grants read-only access to the session status and to the recorded send request (deposit address, exact amount, request id, deadline) until retention ends. Keep it on the device or handle it like payment data.
 - **No secrets in the SDK.** `partnerId` is public. The SDK never holds keys, never signs, and never sees payout-key material (Pix/UPI keys are encrypted inside `0xramp.app`, end to end).
 
 ## Conformance

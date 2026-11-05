@@ -129,11 +129,11 @@
       // there). Encoding is reviewable and may change; see
       // fixtures/psp-v1/draft/README.md and src/session/handoff.ts.
       document.getElementById("btn-handoff").addEventListener("click", function () {
-        var link = "zramp://send?sessionRef=" + encodeURIComponent(sessionRef) +
+        // The base is the registered return URL itself: no path added, no memo on a SELL.
+        var link = "mywallet://ramp?sessionRef=" + encodeURIComponent(sessionRef) +
           "&requestId=reqSANDBOX00000001" +
           "&address=t1FakeAddrForFixtures9zqqqqqqqqqqqqq" +
-          "&amountZat=5000000" +
-          "&memo=Draft%20handoff";
+          "&amountZat=5000000";
         log("out", "→ DRAFT handoff link (browser-hosted mode, unfrozen): " + link);
       });
 

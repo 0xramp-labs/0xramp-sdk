@@ -45,8 +45,11 @@ bank/browser handoff requires a separately validated host flow.
 
 `host.ts` persists creation intent and the full session, restores tickets,
 attaches before load, detaches on close and checks authoritative status on
-resume, foreground, return link and advisory result. Uncertain creation and
-expired sessions remain blocked for reconciliation. Secure storage and the
+resume, foreground, return link, handoff link and advisory result. A handoff
+link reaches the wallet only after status is read and `verifyZecSendHandoff`
+matched it against the recorded request, once per request through the journal,
+and its resume link is built from the verbatim session URL. Uncertain
+creation and expired sessions remain blocked for reconciliation. Secure storage and the
 send journal use a fixed demonstration-wallet namespace: replace it with the
 actual unlocked-wallet namespace and share one adapter object across hosts.
 Never delete unresolved journal entries to restart a payment.

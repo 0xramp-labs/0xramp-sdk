@@ -3,7 +3,7 @@
  * All values are sandbox-style synthetic; nothing here is real address,
  * amount, or transaction data.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   ConfigError,
@@ -41,6 +41,14 @@ describe("parseZecSendHandoffUrl", () => {
       address: ADDRESS,
       amountZat: AMOUNT_ZAT,
     });
+  });
+
+  it("parses the registered return URL itself as the handoff base (no path, no memo), unlike a return link", () => {
+    const link = `zingo://0xramp?sessionRef=${SESSION_REF}&requestId=${REQUEST_ID}&address=${ADDRESS}&amountZat=5000000`;
+    expect(parseZecSendHandoffUrl(link, { sessionRef: SESSION_REF })).toEqual({ sessionRef: SESSION_REF, requestId: REQUEST_ID, address: ADDRESS, amountZat: "5000000" });
+    // The discriminator a host must use before falling back to the return parser:
+    expect(new URL(link).searchParams.has("requestId")).toBe(true);
+    expect(new URL(`zingo://0xramp?sessionRef=${SESSION_REF}&outcome=settled`).searchParams.has("requestId")).toBe(false);
   });
 
   it("omits the memo key when the link carries none", () => {
@@ -135,6 +143,42 @@ describe("buildZecSendResumeUrl", () => {
   it("works on scheme-without-// bases, preserving existing params", () => {
     expect(buildZecSendResumeUrl(`zramp:ramp?sessionRef=${SESSION_REF}`, { txid: TXID })).toBe(
       `zramp:ramp?sessionRef=${SESSION_REF}&txid=${TXID}`,
+    );
+  });
+
+  it("keeps the #paneToken fragment of a verbatim session URL after the appended evidence", () => {
+    const base = `${PANE_URL}#paneToken=paneGOLDEN00000000000000000000000000000001`;
+    const resume = buildZecSendResumeUrl(base, { txid: TXID });
+    expect(resume).toBe(`${PANE_URL}&txid=${TXID}#paneToken=paneGOLDEN00000000000000000000000000000001`);
+    expect(new URL(resume).hash).toBe(new URL(base).hash);
+  });
+
+  it("keeps the evidence in the query where a URL class appends mutated params at the end", () => {
+    // React Native's own URL class works this way, unless the app installs a polyfill.
+    class AppendingUrl {
+      readonly searchParams: URLSearchParams;
+      constructor(private readonly raw: string) {
+        this.searchParams = new URLSearchParams(raw.split("#")[0]!.split("?")[1] ?? "");
+      }
+      toString() { return `${this.raw}&${this.searchParams}`; }
+    }
+    vi.stubGlobal("URL", AppendingUrl);
+    try {
+      const base = `${PANE_URL}#paneToken=paneGOLDEN00000000000000000000000000000001`;
+      expect(buildZecSendResumeUrl(base, { txid: TXID, txids: [TXID, TXID_2] })).toBe(
+        `${PANE_URL}&txid=${TXID}&txids=${TXID}%2C${TXID_2}#paneToken=paneGOLDEN00000000000000000000000000000001`,
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("adds a query to a base without one and leaves the base otherwise verbatim", () => {
+    expect(buildZecSendResumeUrl("https://0xramp.app/partner/zingo#paneToken=abc", { txid: TXID })).toBe(
+      `https://0xramp.app/partner/zingo?txid=${TXID}#paneToken=abc`,
+    );
+    expect(buildZecSendResumeUrl("https://0xramp.app/partner/zingo?a=1&#paneToken=x?y", { txid: TXID })).toBe(
+      `https://0xramp.app/partner/zingo?a=1&txid=${TXID}#paneToken=x?y`,
     );
   });
 

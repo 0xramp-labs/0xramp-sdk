@@ -2,10 +2,11 @@
  * Platform-independent popup-mode lifecycle for a web host.
  *
  * Popup mode is bridge-less (partner guide §9): create → open → return link →
- * authoritative status. There is no pane bridge and no wallet callback here —
- * the SDK never signs, and in this mode the host is not in the signing path.
- * Contract mirrors examples/react-native-host/host.ts so the two references
- * stay reviewable side by side.
+ * authoritative status. There is no pane bridge and no wallet adapter here: the
+ * SDK never signs, and this example reports the pane's send-request link
+ * instead of serving it, so it cannot fund a SELL on its own. Contract mirrors
+ * examples/react-native-host/host.ts so the two references stay reviewable side
+ * by side.
  */
 
 /** @typedef {import("@0xramp/sdk").RampClient} RampClient */
@@ -146,6 +147,14 @@ export function createWebPartnerHost({ client, storage, openPane, ownsReturnUrl,
      */
     handleReturn(url) {
       if (!ownsReturnUrl(url)) return;
+      let target;
+      try { target = new URL(url); } catch { return; }
+      if (target.searchParams.has("requestId")) {
+        // Pane → wallet handoff (draft codec). This host has no wallet adapter
+        // and never signs: say so instead of reading the request as a return.
+        update({ message: "Handoff link received, but this host has no wallet adapter. Nothing was sent; reconcile via status." });
+        return;
+      }
       let parsed;
       try { parsed = client.parseReturnUrl(url); } catch { return; }
       if (session !== undefined && parsed.sessionRef === session.sessionRef) void refreshStatus();

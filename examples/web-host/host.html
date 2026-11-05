@@ -38,8 +38,9 @@
     </header>
     <p class="muted">
       Bridge-less hosting (partner guide §9): create → popup → return link →
-      authoritative status. No pane bridge exists in this mode; the host is
-      never in the signing path.
+      authoritative status. No pane bridge exists in this mode. This page has
+      no wallet adapter, so it reports the pane's send request instead of
+      serving it.
     </p>
 
     <fieldset>
@@ -104,7 +105,9 @@
         },
       };
 
-      $("returnUrl").value = `${location.origin}${location.pathname}?0xramp-return=1`;
+      // Registered return URLs carry no "?" or "#": links are routed by exact origin and path.
+      const pageUrl = `${location.origin}${location.pathname}`;
+      $("returnUrl").value = pageUrl;
 
       let host = null;
       let popup = null;
@@ -118,13 +121,33 @@
         $("modeBadge").textContent = live ? "LIVE" : "SANDBOX";
       });
 
+      // A return lands as a fresh page load: restore the mode that created the saved session,
+      // so a live session never gets the sandbox client's synthetic status. Public config only.
+      const CONFIG_KEY = "0xramp.web-host.config";
+      const CONFIG_FIELDS = ["mode", "environment", "partnerId", "apiBaseUrl", "paneOrigins"];
+      function saveConfig() {
+        localStorage.setItem(CONFIG_KEY, JSON.stringify(Object.fromEntries(CONFIG_FIELDS.map((id) => [id, $(id).value]))));
+      }
+      function restoreConfig() {
+        try {
+          const saved = JSON.parse(localStorage.getItem(CONFIG_KEY) ?? "null");
+          if (saved === null) return;
+          for (const id of CONFIG_FIELDS) if (typeof saved[id] === "string") $(id).value = saved[id];
+          $("mode").dispatchEvent(new Event("change"));
+        } catch { localStorage.removeItem(CONFIG_KEY); }
+      }
+      restoreConfig();
+
       function openPane(url) {
         popup = window.open(url, "0xramp", "popup,width=420,height=720");
         if (popup === null) log("err", "Popup blocked — allow popups for this origin, then Resume.");
         return popup ? { close: () => { try { popup.close(); } catch {} } } : null;
       }
       function ownsReturnUrl(url) {
-        try { return new URL(url).searchParams.has("0xramp-return"); } catch { return false; }
+        try {
+          const target = new URL(url);
+          return `${target.origin}${target.pathname}` === pageUrl && target.searchParams.has("sessionRef");
+        } catch { return false; }
       }
       function onState(state) {
         $("state").textContent = state.message;
@@ -132,7 +155,7 @@
 
       function sandboxClient() {
         const session = {
-          sessionUrl: new URL("../sandbox/sandbox-pane.html?sessionRef=sessWEBDEMO000001", location.href).toString(),
+          sessionUrl: new URL("../../sandbox/sandbox-pane.html?sessionRef=sessWEBDEMO000001", location.href).toString(),
           sessionRef: "sessWEBDEMO000001",
           statusTicket: "sandbox-ticket-not-real",
           expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
@@ -184,6 +207,7 @@
       $("btn-start").addEventListener("click", () => {
         try {
           host = buildHost();
+          saveConfig();
           void host.initialize().then(() =>
             host.start({
               direction: "sell",
@@ -208,7 +232,7 @@
         if (!host) return;
         const sessionRef = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")?.session?.sessionRef;
         if (sessionRef === undefined) { log("err", "No active sandbox session to return from."); return; }
-        const url = `${location.origin}${location.pathname}?0xramp-return=1&sessionRef=${encodeURIComponent(sessionRef)}&outcome=settled`;
+        const url = `${pageUrl}?sessionRef=${encodeURIComponent(sessionRef)}&outcome=settled`;
         log("in", `return link (advisory): ${url}`);
         host.handleReturn(url);
       });
@@ -216,11 +240,12 @@
         host?.dispose();
         host = null; popup = null;
         await storage.write(null);
+        localStorage.removeItem(CONFIG_KEY);
         $("state").textContent = "";
         log("out", "Demo storage cleared.");
       });
 
-      // Return navigation lands on this page: ?0xramp-return=1&sessionRef=…&outcome=…
+      // Return navigation lands on this page: ?sessionRef=…&outcome=…
       void (async () => {
         if (!ownsReturnUrl(location.href)) return;
         log("in", `return navigation: ${location.href}`);
