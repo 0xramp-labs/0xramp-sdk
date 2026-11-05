@@ -107,6 +107,12 @@ All notable changes to this project are documented here. Format based on
   Publishing (with provenance) is re-introduced when the package is
   registered on npm.
 
+### Security
+
+- Raise the pinned `zod` to 4.6.7 for GHSA-mrhx-c7xc-m3w5 (memory exhaustion while
+  validating oversized constrained collections), which `npm audit` now reports
+  against the previous pin.
+
 ### Fixed
 
 - Web host example: the sandbox session pointed at a path that does not exist,
