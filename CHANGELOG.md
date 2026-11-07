@@ -8,6 +8,8 @@ All notable changes to this project are documented here. Format based on
 
 ### Fixed
 
+- Partner guide: what happens to a sale confirmed and never sent, and how its
+  owner closes it.
 - `buildZecSendResumeUrl` keeps the evidence in the query under React Native's own
   URL class, which appended it after the fragment, where the pane could not read
   it. The example host routes links on the string, since that class has an empty

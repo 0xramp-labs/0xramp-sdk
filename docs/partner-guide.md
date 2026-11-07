@@ -607,6 +607,17 @@ so any change to it ships as a coordinated pane + SDK release.
   wallet's transparent address for the user to copy first. Send exactly
   `amountZat`, with the network fee on top. Reuse one saved session until its
   status is terminal: a new session is blocked while the account has an open sale.
+- **A sale that was confirmed and never sent.** "Confirm in wallet" freezes the
+  route, and that account cannot start another sale while it is open. Reopen the
+  saved `sessionUrl` and the pane offers the same request again. If your wallet
+  did not send and will not, the account owner can close the sale: signed in to
+  0xramp outside your wallet, "My wallet did not send" on the status card, or in
+  the funding panel of a reopened session. It needs no session credentials, and
+  your app cannot do it for them. It is refused while your wallet has reported a
+  transaction or an unclear broadcast, or a deposit is visible, so report a
+  decline as a decline. Afterwards `verifyZecSendHandoff` refuses the old link
+  with `closed`, and status reads `cancelled` with `terminal: false`, because a
+  deposit that still lands on the route reopens the sale.
 - **React Native.** The SDK's calls work with React Native's own URL classes, but
   they report an empty `hostname` for a custom scheme. Route links on the string,
   as the example host does, or install a WHATWG URL polyfill.
